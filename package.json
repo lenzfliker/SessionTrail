@@ -1,0 +1,81 @@
+{
+  "name": "sessiontrail",
+  "productName": "SessionTrail",
+  "version": "0.1.0",
+  "private": true,
+  "author": "SessionTrail",
+  "description": "Windows-first tray app for tracking focused work sessions.",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:main\" \"npm:dev:electron\"",
+    "dev:renderer": "vite --host 127.0.0.1 --port 5173",
+    "dev:main": "tsc -p tsconfig.node.json --watch --preserveWatchOutput",
+    "dev:electron": "wait-on tcp:5173 dist/main/main.js dist/preload/preload.js && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 node scripts/launch-electron.cjs",
+    "build": "npm run build:main && npm run build:renderer",
+    "build:main": "tsc -p tsconfig.node.json",
+    "build:renderer": "vite build",
+    "package": "npm run build && electron-forge package",
+    "make": "npm run build && electron-forge make --platform=win32",
+    "start": "node scripts/launch-electron.cjs",
+    "smoke:session-machine": "node scripts/launch-electron.cjs scripts/session-machine-smoke.cjs",
+    "smoke:reflect-analytics": "node scripts/reflect-analytics-smoke.cjs",
+    "smoke:vnext-regression": "node scripts/launch-electron.cjs scripts/vnext-regression-smoke.cjs",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "rebuild-native": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "npm run rebuild-native"
+  },
+  "dependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.8.0",
+    "electron-squirrel-startup": "^1.0.1",
+    "electron-store": "^11.0.2",
+    "ffmpeg-static": "^5.3.0",
+    "motion": "^12.38.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.11.1",
+    "@electron-forge/maker-squirrel": "^7.11.1",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.11.1",
+    "@electron/rebuild": "^4.0.3",
+    "@types/node": "^24.6.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.4",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^38.3.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.7",
+    "wait-on": "^9.0.1"
+  },
+  "config": {
+    "forge": {
+      "packagerConfig": {
+        "asar": true,
+        "icon": "./public/icons/sessiontrail-app-icon",
+        "executableName": "SessionTrail"
+      },
+      "makers": [
+        {
+          "name": "@electron-forge/maker-squirrel",
+          "platforms": [
+            "win32"
+          ],
+          "config": {
+            "name": "SessionTrail",
+            "exe": "SessionTrail.exe",
+            "setupIcon": "./public/icons/sessiontrail-app-icon.ico"
+          }
+        }
+      ],
+      "plugins": [
+        {
+          "name": "@electron-forge/plugin-auto-unpack-natives",
+          "config": {}
+        }
+      ]
+    }
+  }
+}
