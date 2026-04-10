@@ -58,7 +58,8 @@ const api: SessionTrailApi = {
     }
   },
   reflect: {
-    getSummary: (query) => ipcRenderer.invoke(IPC_CHANNELS.reflectGetSummary, query)
+    getSummary: (query) => ipcRenderer.invoke(IPC_CHANNELS.reflectGetSummary, query),
+    exportReport: (query) => ipcRenderer.invoke(IPC_CHANNELS.reflectExportReport, query)
   },
   reminder: {
     getPendingPrompt: () => ipcRenderer.invoke(IPC_CHANNELS.reminderGetPendingPrompt),
@@ -75,8 +76,12 @@ const api: SessionTrailApi = {
   },
   checkpoint: {
     createManual: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.checkpointCreateManual, sessionId),
+    retake: (checkpointId) => ipcRenderer.invoke(IPC_CHANNELS.checkpointRetake, checkpointId),
     finalize: (input) => ipcRenderer.invoke(IPC_CHANNELS.checkpointFinalize, input),
+    replacePendingScreenshot: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.checkpointReplacePendingScreenshot, input),
     updateNote: (input) => ipcRenderer.invoke(IPC_CHANNELS.checkpointUpdateNote, input),
+    delete: (checkpointId) => ipcRenderer.invoke(IPC_CHANNELS.checkpointDelete, checkpointId),
     listForSession: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.checkpointListForSession, sessionId),
     getScreenshotPreview: (checkpointId) => ipcRenderer.invoke(IPC_CHANNELS.checkpointGetScreenshotPreview, checkpointId)
   },

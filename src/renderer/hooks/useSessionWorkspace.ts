@@ -85,6 +85,7 @@ export function useSessionWorkspace(
       setAppendixVideo(nextAppendixVideo);
       setComposition(normalizeCompositionDuration(nextComposition, getEffectiveVoiceOverDurationMs(nextVoiceOver)));
       setCompositionDirty(false);
+      setPreviewCache({});
       setSelectedSegmentId((current) =>
         current && nextComposition.segments.some((segment) => segment.id === current)
           ? current

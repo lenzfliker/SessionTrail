@@ -93,6 +93,17 @@ export class CheckpointRepository {
       });
   }
 
+  public delete(checkpointId: string): void {
+    this.db
+      .prepare(
+        `
+          DELETE FROM checkpoints
+          WHERE id = ?
+        `
+      )
+      .run(checkpointId);
+  }
+
   public findById(checkpointId: string): CheckpointEntity | null {
     const row = this.db
       .prepare(

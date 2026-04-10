@@ -90,4 +90,18 @@ export class ExportTimelineSegmentRepository {
 
     return rows.map(mapExportTimelineSegmentRow);
   }
+
+  public countByCheckpointId(checkpointId: string): number {
+    const row = this.db
+      .prepare(
+        `
+          SELECT COUNT(*) AS segment_count
+          FROM export_timeline_segments
+          WHERE checkpoint_id = ?
+        `
+      )
+      .get(checkpointId) as { segment_count: number } | undefined;
+
+    return row?.segment_count ?? 0;
+  }
 }

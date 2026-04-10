@@ -5,7 +5,6 @@ import {
   type AnimatedIconComponent,
   BellIcon,
   BookmarkPlusIcon,
-  CheckIcon,
   ClockIcon,
   GalleryIcon,
   IconLabel,
@@ -17,11 +16,13 @@ import {
   XIcon
 } from "./components/animated-icons";
 import { ComposeView } from "./components/ComposeView";
+import { PendingCheckpointEditor } from "./components/PendingCheckpointEditor";
 import { ReflectView } from "./components/ReflectView";
 import { RecoveryBanner } from "./components/RecoveryBanner";
 import { ReminderBanner } from "./components/ReminderBanner";
 import { SettingsView } from "./components/SettingsView";
 import { TrackView } from "./components/TrackView";
+import { ToastStack, type ToastMessage, type ToastTone } from "./components/ToastStack";
 import { useRetroFeedback } from "./hooks/useRetroFeedback";
 import { useSessionWorkspace } from "./hooks/useSessionWorkspace";
 import {
@@ -34,6 +35,7 @@ import {
 import type {
   AppState,
   ExportCompositionSummary,
+  ReflectQuery,
   ReflectRangePreset,
   ReflectSummary,
   SessionHistoryPage,
@@ -62,6 +64,12 @@ type PreviewSelectionState = {
   selectedCheckpointId: string | null;
   selectedSegmentId: string | null;
 };
+
+function createToastId(): string {
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random()}`;
+}
 const APP_ICON_SRC = "/icons/sessiontrail-app-icon.png";
 const HISTORY_PAGE_SIZE = 12;
 const VIEW_TABS: Array<{ mode: ViewMode; label: string; icon: AnimatedIconComponent }> = [
@@ -108,7 +116,7 @@ export function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("track");
   const [cancelDialogSessionId, setCancelDialogSessionId] = useState<string | null>(null);
   const [sessionTitle, setSessionTitle] = useState("");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [nowMs, setNowMs] = useState(Date.now());
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -141,6 +149,7 @@ export function App() {
     offset: 0
   });
   const [reflectPreset, setReflectPreset] = useState<ReflectRangePreset>("this_week");
+  const [reflectPeriodOffset, setReflectPeriodOffset] = useState(0);
   const [reflectSummary, setReflectSummary] = useState<ReflectSummary | null>(null);
   const [reflectLoading, setReflectLoading] = useState(false);
   const [selectedReflectSessionId, setSelectedReflectSessionId] = useState<string | null>(null);
@@ -206,39 +215,55 @@ export function App() {
     loadSessionWorkspace
   } = useSessionWorkspace(selectedSessionId, state.pendingCheckpoint?.checkpoint.id ?? null);
 
+  const pushToast = (message: string, tone: ToastTone = "error") => {
+    setToasts((current) => [...current, { id: createToastId(), message, tone }]);
+  };
+
+  const dismissToast = (toastId: string) => {
+    setToasts((current) => current.filter((toast) => toast.id !== toastId));
+  };
+
   const runAction = async (action: () => Promise<unknown>) => {
-    setErrorMessage(null);
     setBusy(true);
     try {
       await action();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Unexpected error");
+      pushToast(error instanceof Error ? error.message : "Unexpected error");
     } finally {
       setBusy(false);
     }
   };
 
   const runPassiveAction = async (action: () => Promise<unknown>) => {
-    setErrorMessage(null);
     try {
       await action();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Unexpected error");
+      pushToast(error instanceof Error ? error.message : "Unexpected error");
     }
   };
 
   useEffect(() => {
     let mounted = true;
     const unsubscribe = window.sessionTrail.app.onStateChanged((nextState) => mounted && setState(nextState));
-    const timer = window.setInterval(() => setNowMs(Date.now()), 250);
     void window.sessionTrail.app.getState().then((nextState) => mounted && setState(nextState));
     return () => {
       mounted = false;
       unsubscribe();
-      window.clearInterval(timer);
       streamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, []);
+
+  useEffect(() => {
+    if (viewMode !== "track" && viewMode !== "compose") {
+      setNowMs(Date.now());
+      return;
+    }
+
+    const timer = window.setInterval(() => setNowMs(Date.now()), 250);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [viewMode]);
 
   useEffect(() => {
     if (startupSoundPlayedRef.current || state.status === "booting") {
@@ -283,6 +308,21 @@ export function App() {
   }, [playFeedback, state]);
 
   useEffect(() => {
+    if (!state.lastErrorMessage) {
+      return;
+    }
+
+    pushToast(state.lastErrorMessage);
+    void window.sessionTrail.app.clearLastError();
+  }, [state.lastErrorMessage]);
+
+  useEffect(() => {
+    if (state.activeExportJob?.status === "failed" && state.activeExportJob.errorMessage) {
+      pushToast(state.activeExportJob.errorMessage);
+    }
+  }, [state.activeExportJob?.errorMessage, state.activeExportJob?.status]);
+
+  useEffect(() => {
     setCheckpointNoteText(state.pendingCheckpoint?.checkpoint.noteText ?? "");
   }, [state.pendingCheckpoint?.checkpoint.id, state.pendingCheckpoint?.checkpoint.noteText]);
 
@@ -305,6 +345,14 @@ export function App() {
     setHistoryOffset(0);
   }, [deferredHistoryQuery, historyStatus]);
 
+  const reflectQuery = useMemo<ReflectQuery>(
+    () => ({
+      preset: reflectPreset,
+      periodOffset: reflectPeriodOffset
+    }),
+    [reflectPeriodOffset, reflectPreset]
+  );
+
   useEffect(() => {
     let cancelled = false;
     void window.sessionTrail.session.listHistory({
@@ -318,7 +366,7 @@ export function App() {
       }
     }).catch((error) => {
       if (!cancelled) {
-        setErrorMessage(error instanceof Error ? error.message : "Failed to load session history");
+        pushToast(error instanceof Error ? error.message : "Failed to load session history");
       }
     });
     return () => {
@@ -334,7 +382,7 @@ export function App() {
     let cancelled = false;
     setReflectLoading(true);
     void window.sessionTrail.reflect
-      .getSummary({ preset: reflectPreset })
+      .getSummary(reflectQuery)
       .then((summary) => {
         if (cancelled) {
           return;
@@ -351,7 +399,7 @@ export function App() {
       })
       .catch((error) => {
         if (!cancelled) {
-          setErrorMessage(error instanceof Error ? error.message : "Failed to load reflect data");
+          pushToast(error instanceof Error ? error.message : "Failed to load reflect data");
         }
       })
       .finally(() => {
@@ -364,7 +412,7 @@ export function App() {
       cancelled = true;
     };
   }, [
-    reflectPreset,
+    reflectQuery,
     viewMode,
     state.activeSession?.id,
     state.activeSession?.status,
@@ -599,7 +647,7 @@ export function App() {
         await audio.play();
       } catch (error) {
         if (!canceled) {
-          setErrorMessage(error instanceof Error ? error.message : "Unable to play the prepared voice-over preview.");
+          pushToast(error instanceof Error ? error.message : "Unable to play the prepared voice-over preview.");
         }
       } finally {
         if (!canceled) {
@@ -951,6 +999,43 @@ export function App() {
     await loadSessionWorkspace(selectedSession?.id ?? null);
   };
 
+  const deleteSelectedCheckpoint = async () => {
+    if (!selectedCheckpoint) {
+      return;
+    }
+
+    await window.sessionTrail.checkpoint.delete(selectedCheckpoint.id);
+    await loadSessionWorkspace(selectedSession?.id ?? null);
+  };
+
+  const savePendingCheckpoint = async (editedScreenshotBuffer: ArrayBuffer | null) => {
+    if (!state.pendingCheckpoint) {
+      return;
+    }
+
+    if (editedScreenshotBuffer) {
+      await window.sessionTrail.checkpoint.replacePendingScreenshot({
+        checkpointId: state.pendingCheckpoint.checkpoint.id,
+        buffer: editedScreenshotBuffer
+      });
+    }
+
+    await window.sessionTrail.checkpoint.finalize({
+      checkpointId: state.pendingCheckpoint.checkpoint.id,
+      noteText: checkpointNoteText,
+    });
+    playFeedback("checkpoint_save");
+    await loadSessionWorkspace(state.pendingCheckpoint.checkpoint.sessionId);
+  };
+
+  const retakePendingCheckpoint = async () => {
+    if (!state.pendingCheckpoint) {
+      return;
+    }
+
+    await window.sessionTrail.checkpoint.retake(state.pendingCheckpoint.checkpoint.id);
+  };
+
   const assignSelectedSegmentCheckpoint = (checkpointId: string) => {
     if (!selectedSegment) {
       return;
@@ -969,6 +1054,24 @@ export function App() {
     setCompositionDirty(true);
     setSelectedCheckpointId(checkpointId);
   };
+
+  const handleReflectPresetChange = (nextPreset: ReflectRangePreset) => {
+    setReflectPreset(nextPreset);
+    setReflectPeriodOffset(0);
+  };
+
+  const selectedCheckpointDeleteReason =
+    !selectedCheckpoint
+      ? null
+      : selectedCheckpoint.status !== "completed"
+        ? "Only completed checkpoints can be deleted."
+        : composition?.segments.some((segment) => segment.checkpointId === selectedCheckpoint.id)
+          ? "This checkpoint is still used in the timeline. Reassign or remove its segment before deleting it."
+          : null;
+  const canDeleteSelectedCheckpoint =
+    Boolean(selectedCheckpoint) &&
+    selectedCheckpoint?.status === "completed" &&
+    !selectedCheckpointDeleteReason;
 
   return (
     <MotionConfig reducedMotion="user">
@@ -1021,34 +1124,7 @@ export function App() {
           </LayoutGroup>
         </header>
 
-        <AnimatePresence initial={false} mode="popLayout">
-        {state.lastErrorMessage ? (
-          <motion.section
-            key="state-error"
-            className="banner banner--error"
-            layout={motionEnabled}
-            initial={motionEnabled ? "hidden" : false}
-            animate="visible"
-            exit={motionEnabled ? "exit" : undefined}
-            variants={SURFACE_VARIANTS}
-          >
-            {state.lastErrorMessage}
-          </motion.section>
-        ) : null}
-        {errorMessage ? (
-          <motion.section
-            key="app-error"
-            className="banner banner--warning"
-            layout={motionEnabled}
-            initial={motionEnabled ? "hidden" : false}
-            animate="visible"
-            exit={motionEnabled ? "exit" : undefined}
-            variants={SURFACE_VARIANTS}
-          >
-            {errorMessage}
-          </motion.section>
-        ) : null}
-      </AnimatePresence>
+        <ToastStack toasts={toasts} motionEnabled={motionEnabled} onDismiss={dismissToast} />
 
       <AnimatePresence initial={false}>
         {state.pendingRecovery ? (
@@ -1147,39 +1223,16 @@ export function App() {
                 />
               </span>
             </div>
-            <img
-              className="checkpoint-overlay__screenshot"
-              src={state.pendingCheckpoint.screenshotDataUrl}
-              alt="Checkpoint screenshot"
+            <PendingCheckpointEditor
+              pendingCheckpoint={state.pendingCheckpoint}
+              noteText={checkpointNoteText}
+              busy={busy}
+              onNoteChange={setCheckpointNoteText}
+              onRetake={() => void runAction(() => retakePendingCheckpoint())}
+              onSave={(editedScreenshotBuffer) =>
+                void runAction(async () => savePendingCheckpoint(await editedScreenshotBuffer))
+              }
             />
-            <p className="checkpoint-overlay__hint">Required to continue - describe what you just worked on.</p>
-            <label className="field">
-              <span>Note</span>
-              <textarea
-                rows={4}
-                value={checkpointNoteText}
-                placeholder="What did you just do or decide?"
-                onChange={(event) => setCheckpointNoteText(event.target.value)}
-                autoFocus
-              />
-            </label>
-            <div className="button-row">
-              <button
-                type="button"
-                className="button"
-                disabled={busy || checkpointNoteText.trim().length === 0}
-                onClick={() => void runAction(async () => {
-                  await window.sessionTrail.checkpoint.finalize({
-                    checkpointId: state.pendingCheckpoint!.checkpoint.id,
-                    noteText: checkpointNoteText,
-                  });
-                  playFeedback("checkpoint_save");
-                  await loadSessionWorkspace(state.pendingCheckpoint?.checkpoint.sessionId ?? null);
-                })}
-              >
-                <IconLabel icon={CheckIcon} label="Save note" />
-              </button>
-            </div>
           </motion.div>
         </motion.div>
       ) : null}
@@ -1314,6 +1367,8 @@ export function App() {
           previewCheckpointPreviewUrl={previewCheckpointPreviewUrl}
           selectedSegment={selectedSegment}
           inspectorNoteText={inspectorNoteText}
+          canDeleteSelectedCheckpoint={canDeleteSelectedCheckpoint}
+          selectedCheckpointDeleteReason={selectedCheckpointDeleteReason}
           onSelectSession={setSelectedSessionId}
           onCreateManualCheckpoint={() =>
             void runAction(async () => {
@@ -1401,6 +1456,7 @@ export function App() {
           onRetryBuild={() => void runAction(() => runExportBuild())}
           onInspectorNoteChange={setInspectorNoteText}
           onSaveCheckpointNote={() => void runAction(() => saveSelectedCheckpointNote())}
+          onDeleteSelectedCheckpoint={() => void runAction(() => deleteSelectedCheckpoint())}
           onAssignSegmentCheckpoint={assignSelectedSegmentCheckpoint}
         />
         </motion.div>
@@ -1451,10 +1507,18 @@ export function App() {
               <ReflectView
                 summary={reflectSummary}
                 loading={reflectLoading}
+                busy={busy}
                 preset={reflectPreset}
+                periodOffset={reflectPeriodOffset}
                 selectedSessionId={selectedReflectSessionId}
-                onPresetChange={setReflectPreset}
+                onPresetChange={handleReflectPresetChange}
+                onPeriodOffsetChange={setReflectPeriodOffset}
                 onSelectSession={setSelectedReflectSessionId}
+                onExportReport={() =>
+                  void runPassiveAction(async () => {
+                    await window.sessionTrail.reflect.exportReport(reflectQuery);
+                  })
+                }
               />
             ) : null}
 

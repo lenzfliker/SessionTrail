@@ -1,4 +1,7 @@
 import type Database from "better-sqlite3";
+import { app, dialog } from "electron";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ReflectQuery, ReflectSummary } from "../shared/contracts";
 import type {
   CheckpointEntity,
@@ -124,6 +127,115 @@ function placeholders(count: number): string {
   return Array.from({ length: count }, () => "?").join(", ");
 }
 
+function escapeCsv(value: string | number | null): string {
+  const normalized = value === null ? "" : String(value);
+  if (/[",\r\n]/.test(normalized)) {
+    return `"${normalized.replace(/"/g, "\"\"")}"`;
+  }
+
+  return normalized;
+}
+
+function formatDuration(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600).toString().padStart(2, "0");
+  const minutes = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, "0");
+  const seconds = Math.floor(totalSeconds % 60).toString().padStart(2, "0");
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+function formatDatePart(value: string): string {
+  return value.slice(0, 10);
+}
+
+function buildReportDefaultPath(summary: ReflectSummary): string {
+  const presetLabel = summary.preset === "this_month" ? "month" : "week";
+  const startLabel = formatDatePart(summary.rangeStartedAt);
+  const endLabel = formatDatePart(summary.rangeEndedAt);
+  return join(
+    app.getPath("downloads"),
+    `SessionTrail-reflect-${presetLabel}-${startLabel}-to-${endLabel}.csv`
+  );
+}
+
+function buildReportCsv(summary: ReflectSummary): string {
+  const lines: string[] = [];
+  const pushRow = (...values: Array<string | number | null>) => {
+    lines.push(values.map(escapeCsv).join(","));
+  };
+
+  pushRow("Report Metadata", null);
+  pushRow("Generated At", summary.generatedAt);
+  pushRow("Preset", summary.preset);
+  pushRow("Range Label", summary.rangeLabel);
+  pushRow("Range Started At", summary.rangeStartedAt);
+  pushRow("Range Ended At", summary.rangeEndedAt);
+  lines.push("");
+
+  pushRow("Summary", null);
+  pushRow("Metric", "Value");
+  pushRow("Total Sessions", summary.overview.totalSessions);
+  pushRow("Completed Sessions", summary.overview.completedSessions);
+  pushRow("Canceled Sessions", summary.overview.canceledSessions);
+  pushRow("Total Worked", formatDuration(summary.overview.totalWorkedSeconds));
+  pushRow("Median Session", formatDuration(summary.overview.medianWorkedSeconds));
+  pushRow("Pause Count", summary.fragmentation.totalPauseCount);
+  pushRow("Pauses Per Worked Hour", summary.fragmentation.pausesPerWorkedHour);
+  pushRow("Median Pause", formatDuration(summary.fragmentation.medianPauseSeconds));
+  pushRow("Longest Active Block", formatDuration(summary.fragmentation.longestActiveBlockSeconds));
+  pushRow("Average Active Block", formatDuration(summary.fragmentation.averageActiveBlockSeconds));
+  pushRow("Reminder Prompts", summary.checkpoints.reminderTriggeredCount);
+  pushRow("Reminder Captured", summary.checkpoints.reminderCapturedCount);
+  pushRow("Manual Checkpoints", summary.checkpoints.manualCheckpointCount);
+  pushRow("Completed Checkpoints", summary.checkpoints.completedCheckpointCount);
+  pushRow("Abandoned Checkpoints", summary.checkpoints.abandonedCheckpointCount);
+  lines.push("");
+
+  pushRow("Daily Totals", null);
+  pushRow("Day", "Active Worked", "Session Starts");
+  for (const weekday of summary.rhythms.weekdays) {
+    pushRow(weekday.label, formatDuration(weekday.activeSeconds), weekday.sessionStarts);
+  }
+  lines.push("");
+
+  pushRow("Sessions", null);
+  pushRow(
+    "Title",
+    "Status",
+    "Started At",
+    "Ended At",
+    "Worked",
+    "Paused",
+    "Pause Count",
+    "Longest Active Block",
+    "Average Active Block",
+    "Reminder Prompts",
+    "Manual Checkpoints",
+    "Completed Checkpoints",
+    "Abandoned Checkpoints",
+    "Interruption Flags"
+  );
+  for (const session of summary.sessions) {
+    pushRow(
+      session.title,
+      session.status,
+      session.startedAt,
+      session.endedAt,
+      formatDuration(session.workedSeconds),
+      formatDuration(session.pausedSeconds),
+      session.pauseCount,
+      formatDuration(session.longestActiveBlockSeconds),
+      formatDuration(session.averageActiveBlockSeconds),
+      session.reminderTriggeredCount,
+      session.manualCheckpointCount,
+      session.completedCheckpointCount,
+      session.abandonedCheckpointCount,
+      session.interruptionReasons.join(" | ")
+    );
+  }
+
+  return lines.join("\r\n");
+}
+
 export class ReflectService {
   public constructor(private readonly db: Database.Database) {}
 
@@ -234,5 +346,25 @@ export class ReflectService {
       query,
       range.endedAt
     );
+  }
+
+  public async exportReport(query?: ReflectQuery): Promise<string | null> {
+    const summary = this.getSummary(query);
+    const result = await dialog.showSaveDialog({
+      title: "Export reflect report",
+      defaultPath: buildReportDefaultPath(summary),
+      filters: [{ name: "CSV", extensions: ["csv"] }]
+    });
+
+    if (result.canceled || !result.filePath) {
+      return null;
+    }
+
+    const outputFilePath = result.filePath.toLowerCase().endsWith(".csv")
+      ? result.filePath
+      : `${result.filePath}.csv`;
+
+    writeFileSync(outputFilePath, buildReportCsv(summary), "utf8");
+    return outputFilePath;
   }
 }

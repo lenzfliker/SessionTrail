@@ -8,8 +8,16 @@ function mondayIndex(value) {
   return (value.getDay() + 6) % 7;
 }
 
+function localYmd(value) {
+  return [
+    value.getFullYear(),
+    String(value.getMonth() + 1).padStart(2, "0"),
+    String(value.getDate()).padStart(2, "0")
+  ].join("-");
+}
+
 async function main() {
-  const { buildReflectSummary } = require("../dist/main/reflect-analytics.js");
+  const { buildReflectSummary, resolveReflectRange } = require("../dist/main/reflect-analytics.js");
 
   const now = new Date(2026, 3, 9, 12, 0, 0, 0);
 
@@ -267,11 +275,33 @@ async function main() {
     { preset: "this_month" },
     now
   );
+  const previousWeekSummary = buildReflectSummary(
+    { sessions, workSegments, checkpoints, reminderPrompts },
+    { preset: "this_week", periodOffset: -1 },
+    now
+  );
+  const previousMonthSummary = buildReflectSummary(
+    { sessions, workSegments, checkpoints, reminderPrompts },
+    { preset: "this_month", periodOffset: -1 },
+    now
+  );
+  const previousWeekRange = resolveReflectRange({ preset: "this_week", periodOffset: -1 }, now);
+  const previousMonthRange = resolveReflectRange({ preset: "this_month", periodOffset: -1 }, now);
 
   assert.equal(weekSummary.overview.totalSessions, 3, "This week should include only week-started sessions.");
   assert.equal(monthSummary.overview.totalSessions, 4, "This month should include the earlier month session too.");
+  assert.equal(previousWeekSummary.overview.totalSessions, 1, "Previous week should include the April 1 session only.");
+  assert.equal(previousMonthSummary.overview.totalSessions, 0, "Previous month should exclude current-month sessions.");
   assert.equal(weekSummary.overview.completedSessions, 1, "Only one week session is completed/exported.");
   assert.equal(monthSummary.overview.completedSessions, 2, "Two month sessions are completed/exported.");
+  assert.equal(weekSummary.rangeLabel, "2026-04-06 to 2026-04-09", "Current week label should use absolute dates.");
+  assert.equal(monthSummary.rangeLabel, "2026-04-01 to 2026-04-09", "Current month label should use absolute dates.");
+  assert.equal(previousWeekSummary.rangeLabel, "2026-03-30 to 2026-04-05", "Previous week label should use absolute dates.");
+  assert.equal(previousMonthSummary.rangeLabel, "2026-03-01 to 2026-03-31", "Previous month label should use absolute dates.");
+  assert.equal(localYmd(previousWeekRange.startedAt), "2026-03-30", "Previous week should resolve to the prior Monday.");
+  assert.equal(localYmd(previousWeekRange.endedAt), "2026-04-05", "Previous week should resolve to the prior Sunday.");
+  assert.equal(localYmd(previousMonthRange.startedAt), "2026-03-01", "Previous month should resolve to March.");
+  assert.equal(localYmd(previousMonthRange.endedAt), "2026-03-31", "Previous month should end on the last March day.");
 
   const weekStartHours = new Map(weekSummary.rhythms.startHours.map((bucket) => [bucket.hour, bucket.sessionStarts]));
   assert.equal(weekStartHours.get(9), 1, "Week histogram should count the 09:00 start.");

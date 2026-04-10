@@ -2,10 +2,11 @@ import type Database from "better-sqlite3";
 import { Notification } from "electron";
 import { nativeImage } from "electron";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { patchAppState } from "./app-state";
 import { CaptureService } from "./capture-service";
 import { CheckpointRepository } from "./db/repos/checkpoint-repository";
+import { ExportTimelineSegmentRepository } from "./db/repos/export-timeline-segment-repository";
 import { ScreenshotAssetRepository } from "./db/repos/screenshot-asset-repository";
 import type { CheckpointEntity, ScreenshotAssetEntity } from "./db/entities";
 import { RUNTIME_STATE_KEYS, RuntimeStateStore } from "./runtime-state-store";
@@ -39,6 +40,7 @@ async function wait(delayMs: number): Promise<void> {
 export class CheckpointService {
   private readonly checkpointRepository: CheckpointRepository;
   private readonly screenshotAssetRepository: ScreenshotAssetRepository;
+  private readonly exportTimelineSegmentRepository: ExportTimelineSegmentRepository;
   private readonly captureService: CaptureService;
   private readonly runtimeStateStore: RuntimeStateStore;
   private pendingCheckpoint: PendingCheckpoint | null = null;
@@ -46,6 +48,7 @@ export class CheckpointService {
   public constructor(private readonly db: Database.Database) {
     this.checkpointRepository = new CheckpointRepository(db);
     this.screenshotAssetRepository = new ScreenshotAssetRepository(db);
+    this.exportTimelineSegmentRepository = new ExportTimelineSegmentRepository(db);
     this.captureService = new CaptureService();
     this.runtimeStateStore = new RuntimeStateStore(db);
   }
@@ -143,6 +146,90 @@ export class CheckpointService {
     return screenshot ? this.readScreenshotAsDataUrl(screenshot.filePath) : null;
   }
 
+  public async retakePendingCheckpoint(
+    checkpointId: string,
+    options?: {
+      captureDelayMs?: number;
+      hideDashboardBeforeCapture?: boolean;
+    }
+  ): Promise<PendingCheckpoint> {
+    const checkpoint = this.checkpointRepository.findById(checkpointId);
+    if (!checkpoint || checkpoint.status !== "shell" || this.pendingCheckpoint?.checkpoint.id !== checkpointId) {
+      throw new Error("Only the active pending checkpoint can be retaken.");
+    }
+
+    const screenshotAsset = this.screenshotAssetRepository.findByCheckpointId(checkpointId);
+    if (!screenshotAsset) {
+      throw new Error("Pending checkpoint screenshot was not found.");
+    }
+
+    try {
+      if (options?.hideDashboardBeforeCapture) {
+        hideDashboardWindow();
+      }
+      await wait(options?.captureDelayMs ?? 0);
+
+      const screenshot = await this.captureService.capturePrimaryDisplayPng(checkpoint.sessionId, checkpointId);
+      const updatedScreenshotAsset: ScreenshotAssetEntity = {
+        ...screenshotAsset,
+        filePath: screenshot.filePath,
+        width: screenshot.width,
+        height: screenshot.height,
+        captureMode: "full_desktop"
+      };
+
+      this.screenshotAssetRepository.update(updatedScreenshotAsset);
+
+      const pendingCheckpoint = this.buildPendingCheckpoint(
+        checkpoint,
+        updatedScreenshotAsset,
+        this.pendingCheckpoint.modalOpenedAt,
+        screenshot.pngBuffer
+      );
+      this.setPendingCheckpointState(pendingCheckpoint);
+      return pendingCheckpoint;
+    } finally {
+      showDashboardWindow();
+    }
+  }
+
+  public replacePendingScreenshot(checkpointId: string, buffer: ArrayBuffer): PendingCheckpoint {
+    const checkpoint = this.checkpointRepository.findById(checkpointId);
+    if (!checkpoint || checkpoint.status !== "shell" || this.pendingCheckpoint?.checkpoint.id !== checkpointId) {
+      throw new Error("Only the active pending checkpoint can be updated.");
+    }
+
+    const screenshotAsset = this.screenshotAssetRepository.findByCheckpointId(checkpointId);
+    if (!screenshotAsset) {
+      throw new Error("Pending checkpoint screenshot was not found.");
+    }
+
+    const pngBuffer = Buffer.from(buffer);
+    const image = nativeImage.createFromBuffer(pngBuffer);
+    if (image.isEmpty()) {
+      throw new Error("Edited screenshot data is invalid.");
+    }
+
+    writeFileSync(screenshotAsset.filePath, pngBuffer);
+    const size = image.getSize();
+    const updatedScreenshotAsset: ScreenshotAssetEntity = {
+      ...screenshotAsset,
+      width: size.width || screenshotAsset.width,
+      height: size.height || screenshotAsset.height
+    };
+
+    this.screenshotAssetRepository.update(updatedScreenshotAsset);
+
+    const pendingCheckpoint = this.buildPendingCheckpoint(
+      checkpoint,
+      updatedScreenshotAsset,
+      this.pendingCheckpoint.modalOpenedAt,
+      pngBuffer
+    );
+    this.setPendingCheckpointState(pendingCheckpoint);
+    return pendingCheckpoint;
+  }
+
   public updateCheckpointNote(checkpointId: string, noteText: string): CheckpointSummary {
     const checkpoint = this.checkpointRepository.findById(checkpointId);
     if (!checkpoint) {
@@ -164,6 +251,34 @@ export class CheckpointService {
       ...checkpoint,
       screenshot: screenshotAsset
     };
+  }
+
+  public deleteCheckpoint(checkpointId: string): void {
+    const checkpoint = this.checkpointRepository.findById(checkpointId);
+    if (!checkpoint) {
+      throw new Error("Checkpoint was not found.");
+    }
+
+    if (checkpoint.status !== "completed") {
+      throw new Error("Only completed checkpoints can be deleted.");
+    }
+
+    if (this.pendingCheckpoint?.checkpoint.id === checkpointId) {
+      throw new Error("The active pending checkpoint cannot be deleted.");
+    }
+
+    if (this.exportTimelineSegmentRepository.countByCheckpointId(checkpointId) > 0) {
+      throw new Error("This checkpoint is still used in the timeline. Reassign or remove its segment before deleting it.");
+    }
+
+    const screenshotAsset = this.screenshotAssetRepository.findByCheckpointId(checkpointId);
+    this.db.transaction(() => {
+      this.checkpointRepository.delete(checkpointId);
+    })();
+
+    if (screenshotAsset) {
+      rmSync(screenshotAsset.filePath, { force: true });
+    }
   }
 
   private async createCheckpoint(
@@ -220,9 +335,7 @@ export class CheckpointService {
 
     const pendingCheckpoint = this.buildPendingCheckpoint(checkpoint, screenshotAsset, nowIso(), screenshot.pngBuffer);
 
-    this.pendingCheckpoint = pendingCheckpoint;
-    patchAppState({ pendingCheckpoint });
-    this.persistPendingCheckpoint(pendingCheckpoint);
+    this.setPendingCheckpointState(pendingCheckpoint);
     logInfo("Created checkpoint shell.", {
       checkpointId,
       sessionId: session.id,
@@ -240,9 +353,7 @@ export class CheckpointService {
     const summary = this.updateCheckpointNote(checkpointId, noteText);
 
     if (this.pendingCheckpoint?.checkpoint.id === checkpointId) {
-      this.pendingCheckpoint = null;
-      patchAppState({ pendingCheckpoint: null });
-      this.persistPendingCheckpoint(null);
+      this.setPendingCheckpointState(null);
     }
 
     logInfo("Finalized checkpoint.", { checkpointId });
@@ -283,6 +394,12 @@ export class CheckpointService {
     });
 
     return toDataUrl(resized.toPNG());
+  }
+
+  private setPendingCheckpointState(pendingCheckpoint: PendingCheckpoint | null): void {
+    this.pendingCheckpoint = pendingCheckpoint;
+    patchAppState({ pendingCheckpoint });
+    this.persistPendingCheckpoint(pendingCheckpoint);
   }
 
   private buildPendingCheckpoint(

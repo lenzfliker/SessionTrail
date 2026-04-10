@@ -111,6 +111,7 @@ export function registerIpcHandlers(
   registerHandler(IPC_CHANNELS.sessionListRecent, () => sessionMachine.listRecent());
   registerHandler(IPC_CHANNELS.sessionListHistory, (_event, query) => sessionMachine.listHistory(query));
   registerHandler(IPC_CHANNELS.reflectGetSummary, (_event, query) => reflectService.getSummary(query));
+  registerHandler(IPC_CHANNELS.reflectExportReport, (_event, query) => reflectService.exportReport(query));
   registerHandler(IPC_CHANNELS.reminderGetPendingPrompt, () =>
     reminderPromptService.getPendingPrompt()
   );
@@ -135,11 +136,23 @@ export function registerIpcHandlers(
       hideDashboardBeforeCapture: true
     });
   });
+  registerHandler(IPC_CHANNELS.checkpointRetake, (_event, checkpointId: string) =>
+    checkpointService.retakePendingCheckpoint(checkpointId, {
+      captureDelayMs: settingsService.getSettings().captureDelaySeconds * 1_000,
+      hideDashboardBeforeCapture: true
+    })
+  );
   registerHandler(IPC_CHANNELS.checkpointFinalize, (_event, input) =>
     checkpointService.finalizeCheckpoint(input.checkpointId, input.noteText)
   );
+  registerHandler(IPC_CHANNELS.checkpointReplacePendingScreenshot, (_event, input) =>
+    checkpointService.replacePendingScreenshot(input.checkpointId, input.buffer)
+  );
   registerHandler(IPC_CHANNELS.checkpointUpdateNote, (_event, input) =>
     checkpointService.updateCheckpointNote(input.checkpointId, input.noteText)
+  );
+  registerHandler(IPC_CHANNELS.checkpointDelete, (_event, checkpointId: string) =>
+    checkpointService.deleteCheckpoint(checkpointId)
   );
   registerHandler(IPC_CHANNELS.checkpointListForSession, (_event, sessionId: string) =>
     checkpointService.listForSession(sessionId)

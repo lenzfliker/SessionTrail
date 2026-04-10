@@ -81,6 +81,8 @@ type ComposeViewProps = {
   previewCheckpointPreviewUrl: string | null;
   selectedSegment: ExportTimelineSegmentSummary | null;
   inspectorNoteText: string;
+  canDeleteSelectedCheckpoint: boolean;
+  selectedCheckpointDeleteReason: string | null;
   onSelectSession: (sessionId: string | null) => void;
   onCreateManualCheckpoint: () => void;
   onSaveTimeline: () => void;
@@ -106,6 +108,7 @@ type ComposeViewProps = {
   onRetryBuild: () => void;
   onInspectorNoteChange: (value: string) => void;
   onSaveCheckpointNote: () => void;
+  onDeleteSelectedCheckpoint: () => void;
   onAssignSegmentCheckpoint: (checkpointId: string) => void;
 };
 
@@ -239,6 +242,8 @@ export function ComposeView({
   previewCheckpointPreviewUrl,
   selectedSegment,
   inspectorNoteText,
+  canDeleteSelectedCheckpoint,
+  selectedCheckpointDeleteReason,
   onSelectSession,
   onCreateManualCheckpoint,
   onSaveTimeline,
@@ -260,6 +265,7 @@ export function ComposeView({
   onRetryBuild,
   onInspectorNoteChange,
   onSaveCheckpointNote,
+  onDeleteSelectedCheckpoint,
   onAssignSegmentCheckpoint
 }: ComposeViewProps) {
   const availableCheckpoints = timelineItems.filter((item) => item.thumbnailDataUrl);
@@ -514,6 +520,16 @@ export function ComposeView({
                 <button type="button" className="button button--ghost" disabled={busy} onClick={onToggleRecording}>
                   <IconLabel icon={recording ? XIcon : RadioIcon} label={recording ? "Stop recording" : "Record voice-over"} />
                 </button>
+                {voiceOver ? (
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    disabled={busy || recording || voiceOverPreviewPreparing}
+                    onClick={onPreviewVoiceOver}
+                  >
+                    <IconLabel icon={EyeIcon} label={voiceOverPreviewPreparing ? "Preparing voice-over..." : "Preview voice-over"} />
+                  </button>
+                ) : null}
               </div>
               {voiceOver ? (
                 <>
@@ -540,16 +556,6 @@ export function ComposeView({
                   <div className="trim-stats">
                     <div><span>Duration</span><strong>{formatDurationFromMs(audioDurationMs)}</strong></div>
                     <div><span>Playhead</span><strong>{formatDurationFromMs(audioCurrentTimeMs)}</strong></div>
-                  </div>
-                  <div className="button-row">
-                    <button
-                      type="button"
-                      className="button button--ghost"
-                      disabled={busy || recording || voiceOverPreviewPreparing}
-                      onClick={onPreviewVoiceOver}
-                    >
-                      <IconLabel icon={EyeIcon} label={voiceOverPreviewPreparing ? "Preparing voice-over..." : "Preview voice-over"} />
-                    </button>
                   </div>
                 </>
               ) : (
@@ -678,7 +684,7 @@ export function ComposeView({
                   disabled={busy || recording || pendingRecovery || pendingCheckpoint}
                   onClick={onBuildExport}
                 >
-                  <IconLabel icon={MonitorCheckIcon} label="Build MP4" />
+                  <IconLabel icon={MonitorCheckIcon} label="Render video" />
                 </button>
                 <button
                   type="button"
@@ -694,7 +700,7 @@ export function ComposeView({
                   disabled={busy || recording}
                   onClick={onRetryBuild}
                 >
-                  <IconLabel icon={RotateCwIcon} label="Retry build" />
+                  <IconLabel icon={RotateCwIcon} label="Retry render" />
                 </button>
               </div>
             </section>
@@ -761,7 +767,18 @@ export function ComposeView({
                     >
                       <IconLabel icon={CheckIcon} label="Save note" />
                     </button>
+                    <button
+                      type="button"
+                      className="button button--ghost"
+                      disabled={busy || !canDeleteSelectedCheckpoint}
+                      onClick={onDeleteSelectedCheckpoint}
+                    >
+                      <IconLabel icon={XIcon} label="Delete checkpoint" />
+                    </button>
                   </div>
+                  {selectedCheckpointDeleteReason ? (
+                    <div className="empty-state">{selectedCheckpointDeleteReason}</div>
+                  ) : null}
                 </>
               ) : (
                 <div className="empty-state">

@@ -52,6 +52,35 @@ export class ScreenshotAssetRepository {
       .run(asset);
   }
 
+  public update(asset: ScreenshotAssetEntity): void {
+    this.db
+      .prepare(
+        `
+          UPDATE screenshot_assets
+          SET
+            checkpoint_id = @checkpointId,
+            file_path = @filePath,
+            width = @width,
+            height = @height,
+            capture_mode = @captureMode,
+            created_at = @createdAt
+          WHERE id = @id
+        `
+      )
+      .run(asset);
+  }
+
+  public deleteByCheckpointId(checkpointId: string): void {
+    this.db
+      .prepare(
+        `
+          DELETE FROM screenshot_assets
+          WHERE checkpoint_id = ?
+        `
+      )
+      .run(checkpointId);
+  }
+
   public findByCheckpointId(checkpointId: string): ScreenshotAssetEntity | null {
     const row = this.db
       .prepare(
@@ -75,4 +104,3 @@ export class ScreenshotAssetRepository {
     return row ? mapScreenshotAssetRow(row) : null;
   }
 }
-

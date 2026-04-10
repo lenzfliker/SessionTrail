@@ -134,6 +134,11 @@ export type UpdateCheckpointNoteInput = {
   noteText: string;
 };
 
+export type ReplacePendingScreenshotInput = {
+  checkpointId: string;
+  buffer: ArrayBuffer;
+};
+
 export type SaveRecordedVoiceOverInput = {
   sessionId: string;
   mimeType: string;
@@ -243,6 +248,7 @@ export type ReflectInterruptionReason = "suspend" | "app_exit" | "crash_recovery
 
 export type ReflectQuery = {
   preset?: ReflectRangePreset;
+  periodOffset?: number;
 };
 
 export type ReflectOverviewSummary = {
@@ -422,6 +428,7 @@ export type SessionTrailApi = {
   };
   reflect: {
     getSummary: (query?: ReflectQuery) => Promise<ReflectSummary>;
+    exportReport: (query?: ReflectQuery) => Promise<string | null>;
   };
   reminder: {
     getPendingPrompt: () => Promise<ReminderPromptSummary | null>;
@@ -437,8 +444,11 @@ export type SessionTrailApi = {
   };
   checkpoint: {
     createManual: (sessionId: string) => Promise<PendingCheckpoint>;
+    retake: (checkpointId: string) => Promise<PendingCheckpoint>;
     finalize: (input: FinalizeCheckpointInput) => Promise<CheckpointSummary>;
+    replacePendingScreenshot: (input: ReplacePendingScreenshotInput) => Promise<PendingCheckpoint>;
     updateNote: (input: UpdateCheckpointNoteInput) => Promise<CheckpointSummary>;
+    delete: (checkpointId: string) => Promise<void>;
     listForSession: (sessionId: string) => Promise<TimelineCheckpointSummary[]>;
     getScreenshotPreview: (checkpointId: string) => Promise<string | null>;
   };

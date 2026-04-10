@@ -31,6 +31,7 @@ type ReflectAggregationInput = {
 
 type ReflectRange = {
   preset: ReflectRangePreset;
+  periodOffset: number;
   label: string;
   startedAt: Date;
   endedAt: Date;
@@ -88,6 +89,39 @@ function startOfLocalMonth(now: Date): Date {
   return next;
 }
 
+function endOfLocalWeek(startedAt: Date): Date {
+  const next = new Date(startedAt);
+  next.setDate(next.getDate() + 6);
+  next.setHours(23, 59, 59, 999);
+  return next;
+}
+
+function endOfLocalMonth(startedAt: Date): Date {
+  const next = new Date(startedAt);
+  next.setMonth(next.getMonth() + 1, 0);
+  next.setHours(23, 59, 59, 999);
+  return next;
+}
+
+function addWeeks(date: Date, weeks: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + weeks * 7);
+  return next;
+}
+
+function addMonths(date: Date, months: number): Date {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + months, 1);
+  return next;
+}
+
+function formatRangeDate(value: Date): string {
+  const year = value.getFullYear().toString().padStart(4, "0");
+  const month = (value.getMonth() + 1).toString().padStart(2, "0");
+  const day = value.getDate().toString().padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function median(values: number[]): number {
   if (values.length === 0) {
     return 0;
@@ -102,21 +136,39 @@ function median(values: number[]): number {
   return (sorted[middleIndex - 1] + sorted[middleIndex]) / 2;
 }
 
-function getRangeLabel(preset: ReflectRangePreset): string {
-  return preset === "this_month" ? "This month" : "This week";
+function getRangeLabel(startedAt: Date, endedAt: Date): string {
+  return `${formatRangeDate(startedAt)} to ${formatRangeDate(endedAt)}`;
 }
 
 export function resolveReflectPreset(query?: ReflectQuery): ReflectRangePreset {
   return query?.preset === "this_month" ? "this_month" : "this_week";
 }
 
+export function resolveReflectPeriodOffset(query?: ReflectQuery): number {
+  const nextValue = Number(query?.periodOffset ?? 0);
+  if (!Number.isFinite(nextValue)) {
+    return 0;
+  }
+
+  return Math.min(0, Math.trunc(nextValue));
+}
+
 export function resolveReflectRange(query?: ReflectQuery, now = new Date()): ReflectRange {
   const preset = resolveReflectPreset(query);
+  const periodOffset = resolveReflectPeriodOffset(query);
+  const startedAt =
+    preset === "this_month"
+      ? addMonths(startOfLocalMonth(now), periodOffset)
+      : addWeeks(startOfLocalWeek(now), periodOffset);
+  const rawEndedAt = preset === "this_month" ? endOfLocalMonth(startedAt) : endOfLocalWeek(startedAt);
+  const endedAt = periodOffset === 0 && rawEndedAt.getTime() > now.getTime() ? now : rawEndedAt;
+
   return {
     preset,
-    label: getRangeLabel(preset),
-    startedAt: preset === "this_month" ? startOfLocalMonth(now) : startOfLocalWeek(now),
-    endedAt: now,
+    periodOffset,
+    label: getRangeLabel(startedAt, endedAt),
+    startedAt,
+    endedAt,
   };
 }
 
