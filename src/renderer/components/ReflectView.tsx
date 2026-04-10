@@ -4,7 +4,7 @@ import type {
   ReflectSessionDetail,
   ReflectSummary,
 } from "../../shared/contracts";
-import { ChevronLeftIcon, ChevronRightIcon, IconLabel } from "./animated-icons";
+import { ChevronLeftIcon, ChevronRightIcon, IconLabel, RotateCwIcon } from "./animated-icons";
 import { formatDuration } from "../utils";
 
 const REFLECT_PAGE_SIZE = 12;
@@ -18,6 +18,7 @@ type ReflectViewProps = {
   selectedSessionId: string | null;
   onPresetChange: (preset: ReflectRangePreset) => void;
   onPeriodOffsetChange: (offset: number) => void;
+  onRefresh: () => void;
   onSelectSession: (sessionId: string) => void;
   onExportReport: () => void;
 };
@@ -48,6 +49,7 @@ function ReflectViewInner({
   selectedSessionId,
   onPresetChange,
   onPeriodOffsetChange,
+  onRefresh,
   onSelectSession,
   onExportReport,
 }: ReflectViewProps) {
@@ -158,6 +160,14 @@ function ReflectViewInner({
               This Month
             </button>
           </div>
+          <button
+            type="button"
+            className="button button--ghost reflect-toggle"
+            disabled={busy || loading}
+            onClick={onRefresh}
+          >
+            <IconLabel icon={RotateCwIcon} label="Refresh" size={14} />
+          </button>
           <button type="button" className="button button--ghost reflect-toggle" disabled={busy} onClick={onExportReport}>
             Export CSV
           </button>

@@ -675,12 +675,6 @@ select {
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(239, 246, 255, 0.82));
 }
 
-.reflect-panel,
-.reflect-stat-card {
-  contain: layout paint;
-  content-visibility: auto;
-}
-
 .reflect-stat-card span {
   color: var(--color-text-3);
   font-size: 0.74rem;

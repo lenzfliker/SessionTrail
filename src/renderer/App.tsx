@@ -1,5 +1,5 @@
 import { AnimatePresence, LayoutGroup, MotionConfig, motion } from "motion/react";
-import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   AnimatedIconProvider,
   type AnimatedIconComponent,
@@ -153,6 +153,7 @@ export function App() {
   const [reflectSummary, setReflectSummary] = useState<ReflectSummary | null>(null);
   const [reflectLoading, setReflectLoading] = useState(false);
   const [selectedReflectSessionId, setSelectedReflectSessionId] = useState<string | null>(null);
+  const [reflectRefreshToken, setReflectRefreshToken] = useState(0);
   const [preparedVoiceOverPreviewUrl, setPreparedVoiceOverPreviewUrl] = useState<string | null>(null);
   const [voiceOverPreviewPreparing, setVoiceOverPreviewPreparing] = useState(false);
   const trackRef = useRef<HTMLDivElement | null>(null);
@@ -411,18 +412,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [
-    reflectQuery,
-    viewMode,
-    state.activeSession?.id,
-    state.activeSession?.status,
-    state.activeSession?.workedSeconds,
-    state.activeSession?.updatedAt,
-    state.recentSessions.length,
-    state.recentSessions[0]?.id,
-    state.recentSessions[0]?.status,
-    state.recentSessions[0]?.updatedAt
-  ]);
+  }, [reflectQuery, reflectRefreshToken, viewMode]);
 
   useEffect(() => {
     const sessions = [
@@ -1055,10 +1045,20 @@ export function App() {
     setSelectedCheckpointId(checkpointId);
   };
 
-  const handleReflectPresetChange = (nextPreset: ReflectRangePreset) => {
+  const handleReflectPresetChange = useCallback((nextPreset: ReflectRangePreset) => {
     setReflectPreset(nextPreset);
     setReflectPeriodOffset(0);
-  };
+  }, []);
+
+  const handleReflectRefresh = useCallback(() => {
+    setReflectRefreshToken((current) => current + 1);
+  }, []);
+
+  const handleReflectExport = useCallback(() => {
+    void runPassiveAction(async () => {
+      await window.sessionTrail.reflect.exportReport(reflectQuery);
+    });
+  }, [reflectQuery]);
 
   const selectedCheckpointDeleteReason =
     !selectedCheckpoint
@@ -1513,12 +1513,9 @@ export function App() {
                 selectedSessionId={selectedReflectSessionId}
                 onPresetChange={handleReflectPresetChange}
                 onPeriodOffsetChange={setReflectPeriodOffset}
+                onRefresh={handleReflectRefresh}
                 onSelectSession={setSelectedReflectSessionId}
-                onExportReport={() =>
-                  void runPassiveAction(async () => {
-                    await window.sessionTrail.reflect.exportReport(reflectQuery);
-                  })
-                }
+                onExportReport={handleReflectExport}
               />
             ) : null}
 
