@@ -1,0 +1,59 @@
+{ "frames": {
+   "snail #Idle 0.aseprite": {
+    "frame": { "x": 0, "y": 0, "w": 32, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 32, "h": 32 },
+    "sourceSize": { "w": 32, "h": 32 },
+    "duration": 100
+   },
+   "snail #Idle 1.aseprite": {
+    "frame": { "x": 32, "y": 0, "w": 32, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 32, "h": 32 },
+    "sourceSize": { "w": 32, "h": 32 },
+    "duration": 100
+   },
+   "snail #Idle 2.aseprite": {
+    "frame": { "x": 64, "y": 0, "w": 32, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 32, "h": 32 },
+    "sourceSize": { "w": 32, "h": 32 },
+    "duration": 100
+   },
+   "snail #Idle 3.aseprite": {
+    "frame": { "x": 96, "y": 0, "w": 32, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 32, "h": 32 },
+    "sourceSize": { "w": 32, "h": 32 },
+    "duration": 100
+   }
+ },
+ "meta": {
+  "app": "https://www.aseprite.org/",
+  "version": "1.3.7-x64",
+  "image": "snail_idle_sprite.svg",
+  "format": "RGBA8888",
+  "size": { "w": 128, "h": 32 },
+  "scale": "1",
+  "frameTags": [
+   { "name": "Idle", "from": 0, "to": 3, "direction": "forward", "color": "#000000ff" },
+   { "name": "Move", "from": 4, "to": 7, "direction": "forward", "color": "#000000ff" },
+   { "name": "Working", "from": 8, "to": 15, "direction": "forward", "color": "#000000ff" }
+  ],
+  "layers": [
+   { "name": "Face", "opacity": 255, "blendMode": "normal" },
+   { "name": "Antennas", "opacity": 255, "blendMode": "normal" },
+   { "name": "Shell", "opacity": 255, "blendMode": "normal" },
+   { "name": "Body", "opacity": 255, "blendMode": "normal" },
+   { "name": "Shell Effects", "opacity": 255, "blendMode": "normal" },
+   { "name": "Eyes", "opacity": 255, "blendMode": "normal" },
+   { "name": "Laptop", "opacity": 255, "blendMode": "normal" }
+  ],
+  "slices": [
+  ]
+ }
+}
