@@ -855,9 +855,6 @@ export class SnailPetService {
     }
 
     if (circuitComplete) {
-      if (Math.random() < 0.5) {
-        this.direction = (this.direction * -1) as TravelDirection;
-      }
       this.edgeVisitMask = 0;
     }
 
