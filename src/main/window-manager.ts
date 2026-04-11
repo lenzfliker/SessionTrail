@@ -58,6 +58,14 @@ export async function createDashboardWindow(): Promise<BrowserWindow> {
     patchAppState({ dashboardVisibility: "hidden" });
   });
 
+  dashboardWindow.on("enter-full-screen", () => {
+    patchAppState({ dashboardFullscreen: true });
+  });
+
+  dashboardWindow.on("leave-full-screen", () => {
+    patchAppState({ dashboardFullscreen: false });
+  });
+
   dashboardWindow.on("close", (event) => {
     if (allowWindowClose) {
       return;
@@ -94,6 +102,7 @@ export async function createDashboardWindow(): Promise<BrowserWindow> {
   });
 
   await loadDashboardContents(dashboardWindow);
+  patchAppState({ dashboardFullscreen: dashboardWindow.isFullScreen() });
 
   return dashboardWindow;
 }

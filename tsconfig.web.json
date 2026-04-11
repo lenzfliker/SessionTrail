@@ -16,6 +16,8 @@
     ]
   },
   "include": [
+    "src/pet/**/*.ts",
+    "src/pet/**/*.d.ts",
     "src/renderer/**/*.ts",
     "src/renderer/**/*.tsx",
     "src/renderer/**/*.d.ts",

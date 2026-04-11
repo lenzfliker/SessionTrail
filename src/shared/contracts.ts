@@ -5,13 +5,18 @@ export type WorkSegmentType = "active" | "paused";
 export type ScreenshotMode = "full_desktop";
 export type AudioAssetType = "voice_over";
 export type VideoAssetType = "imported_appendix" | "export";
+export type ImportedMediaKind = "image" | "video";
+export type VisualSourceKind = "checkpoint" | "imported_image" | "imported_video";
 export type ExportJobStatus = "idle" | "running" | "completed" | "failed";
-export type MediaImportKind = "appendix";
+export type MediaImportKind = "imported_media";
 export type MediaImportJobStatus = "running" | "completed" | "failed";
 export type ThemeMode = "clean";
 export type ReminderPromptStatus = "pending" | "snoozed";
 export type ExportTimelineSegmentSource = "live_marker" | "manual_edit" | "seeded";
 export type StartupDashboardBehavior = "tray_only" | "show_dashboard";
+export type SnailPetScale = 2 | 3 | 4;
+export type SnailPetSpeed = "snail_pace" | "low" | "normal" | "fast" | "hyper";
+export type SnailPetBehaviorState = "idle" | "move" | "work";
 
 export type SessionSummary = {
   id: string;
@@ -85,12 +90,22 @@ export type AppSettings = {
   launchAtLogin: boolean;
   captureDelaySeconds: number;
   reminderSnoozeMinutes: number;
+  reflectDailyGoalMinutes: number;
   startupDashboardBehavior: StartupDashboardBehavior;
   openDashboardOnReminder: boolean;
   defaultExportDirectory: string;
   uiSoundsEnabled: boolean;
   uiMotionEnabled: boolean;
+  snailPetEnabled: boolean;
+  snailPetScale: SnailPetScale;
+  snailPetSpeed: SnailPetSpeed;
   theme: ThemeMode;
+};
+
+export type SnailPetRuntimeSummary = {
+  visible: boolean;
+  paused: boolean;
+  behaviorState: SnailPetBehaviorState | null;
 };
 
 export type ResumeNotice = {
@@ -108,6 +123,7 @@ export type AppState = {
   status: AppStatus;
   trayReady: boolean;
   dashboardVisibility: DashboardVisibility;
+  dashboardFullscreen: boolean;
   activeSession: SessionSummary | null;
   recentSessions: SessionSummary[];
   pendingRecovery: RecoverySessionSummary | null;
@@ -117,6 +133,7 @@ export type AppState = {
   activeMediaImportJob: MediaImportJobSummary | null;
   resumeNotice: ResumeNotice | null;
   settings: AppSettings;
+  snailPet: SnailPetRuntimeSummary;
   lastErrorMessage: string | null;
 };
 
@@ -159,9 +176,11 @@ export type SaveAudioTrimInput = {
 export type ExportTimelineSegmentSummary = {
   id: string;
   sessionId: string;
-  checkpointId: string;
+  sourceKind: VisualSourceKind;
+  sourceId: string;
   startOffsetMs: number;
   endOffsetMs: number;
+  mediaStartOffsetMs: number;
   sortOrder: number;
   source: ExportTimelineSegmentSource;
   createdAt: string;
@@ -193,9 +212,11 @@ export type SaveExportCompositionInput = {
   durationMs?: number | null;
   segments: Array<{
     id?: string;
-    checkpointId: string;
+    sourceKind: VisualSourceKind;
+    sourceId: string;
     startOffsetMs: number;
     endOffsetMs: number;
+    mediaStartOffsetMs?: number;
     sortOrder: number;
     source: ExportTimelineSegmentSource;
   }>;
@@ -209,11 +230,15 @@ export type UpdateSettingsInput = Partial<
     | "launchAtLogin"
     | "captureDelaySeconds"
     | "reminderSnoozeMinutes"
+    | "reflectDailyGoalMinutes"
     | "startupDashboardBehavior"
     | "openDashboardOnReminder"
     | "defaultExportDirectory"
     | "uiSoundsEnabled"
     | "uiMotionEnabled"
+    | "snailPetEnabled"
+    | "snailPetScale"
+    | "snailPetSpeed"
   >
 >;
 
@@ -368,6 +393,15 @@ export type VideoAssetSummary = {
   createdAt: string;
 };
 
+export type ImportedMediaAssetSummary = {
+  id: string;
+  sessionId: string;
+  kind: ImportedMediaKind;
+  filePath: string;
+  durationMs: number | null;
+  createdAt: string;
+};
+
 export type ExportJobSummary = {
   id: string;
   sessionId: string;
@@ -458,10 +492,11 @@ export type SessionTrailApi = {
     preparePreview: (audioAssetId: string) => Promise<string>;
     getPreparedPreview: (audioAssetId: string) => Promise<PreparedAudioPreview>;
   };
-  video: {
-    importAppendix: (sessionId: string) => Promise<VideoAssetSummary | null>;
-    getById: (videoAssetId: string) => Promise<VideoAssetSummary | null>;
-    getLatestAppendix: (sessionId: string) => Promise<VideoAssetSummary | null>;
+  media: {
+    importAssets: (sessionId: string) => Promise<ImportedMediaAssetSummary[]>;
+    listImports: (sessionId: string) => Promise<ImportedMediaAssetSummary[]>;
+    getImportById: (assetId: string) => Promise<ImportedMediaAssetSummary | null>;
+    deleteImport: (assetId: string) => Promise<void>;
   };
   export: {
     run: (input: ExportRunInput) => Promise<ExportJobSummary>;

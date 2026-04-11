@@ -91,10 +91,11 @@ const api: SessionTrailApi = {
     preparePreview: (audioAssetId) => ipcRenderer.invoke(IPC_CHANNELS.audioPreparePreview, audioAssetId),
     getPreparedPreview: (audioAssetId) => ipcRenderer.invoke(IPC_CHANNELS.audioGetPreparedPreview, audioAssetId)
   },
-  video: {
-    importAppendix: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.videoImportAppendix, sessionId),
-    getById: (videoAssetId) => ipcRenderer.invoke(IPC_CHANNELS.videoGetById, videoAssetId),
-    getLatestAppendix: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.videoGetLatestAppendix, sessionId)
+  media: {
+    importAssets: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.mediaImportAssets, sessionId),
+    listImports: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.mediaListImports, sessionId),
+    getImportById: (assetId) => ipcRenderer.invoke(IPC_CHANNELS.mediaGetImportById, assetId),
+    deleteImport: (assetId) => ipcRenderer.invoke(IPC_CHANNELS.mediaDeleteImport, assetId)
   },
   export: {
     run: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportRun, input),

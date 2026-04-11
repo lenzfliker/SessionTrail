@@ -7,14 +7,14 @@ import type {
 import { ChevronLeftIcon, ChevronRightIcon, IconLabel, RotateCwIcon } from "./animated-icons";
 import { formatDuration } from "../utils";
 
-const REFLECT_PAGE_SIZE = 12;
-
 type ReflectViewProps = {
   summary: ReflectSummary | null;
   loading: boolean;
   busy: boolean;
   preset: ReflectRangePreset;
   periodOffset: number;
+  dailyGoalMinutes: number;
+  dashboardFullscreen: boolean;
   selectedSessionId: string | null;
   onPresetChange: (preset: ReflectRangePreset) => void;
   onPeriodOffsetChange: (offset: number) => void;
@@ -46,6 +46,8 @@ function ReflectViewInner({
   busy,
   preset,
   periodOffset,
+  dailyGoalMinutes,
+  dashboardFullscreen,
   selectedSessionId,
   onPresetChange,
   onPeriodOffsetChange,
@@ -54,15 +56,13 @@ function ReflectViewInner({
   onExportReport,
 }: ReflectViewProps) {
   const [sessionPage, setSessionPage] = useState(0);
+  const reflectPageSize = 4;
+  const dailyGoalSeconds = Math.max(60, dailyGoalMinutes * 60);
 
   useEffect(() => {
     setSessionPage(0);
   }, [preset, summary?.rangeStartedAt, summary?.rangeEndedAt]);
 
-  const maxWeekdayActiveSeconds = useMemo(
-    () => Math.max(1, ...(summary?.rhythms.weekdays.map((bucket) => bucket.activeSeconds) ?? [0])),
-    [summary?.rhythms.weekdays]
-  );
   const maxHeatmapSeconds = useMemo(
     () => Math.max(1, ...(summary?.rhythms.heatmap.map((cell) => cell.activeSeconds) ?? [0])),
     [summary?.rhythms.heatmap]
@@ -82,7 +82,7 @@ function ReflectViewInner({
   }, [summary?.rhythms.heatmap]);
 
   const sessionCount = summary?.sessions.length ?? 0;
-  const pageCount = Math.max(1, Math.ceil(sessionCount / REFLECT_PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(sessionCount / reflectPageSize));
   const clampedPage = Math.min(sessionPage, Math.max(0, pageCount - 1));
 
   useEffect(() => {
@@ -94,10 +94,10 @@ function ReflectViewInner({
   const visibleSessions = useMemo(
     () =>
       (summary?.sessions ?? []).slice(
-        clampedPage * REFLECT_PAGE_SIZE,
-        clampedPage * REFLECT_PAGE_SIZE + REFLECT_PAGE_SIZE
+        clampedPage * reflectPageSize,
+        clampedPage * reflectPageSize + reflectPageSize
       ),
-    [clampedPage, summary?.sessions]
+    [clampedPage, reflectPageSize, summary?.sessions]
   );
 
   useEffect(() => {
@@ -133,7 +133,11 @@ function ReflectViewInner({
               disabled={busy}
               onClick={() => onPeriodOffsetChange(periodOffset - 1)}
             >
-              <IconLabel icon={ChevronLeftIcon} label={preset === "this_month" ? "Previous month" : "Previous week"} size={14} />
+              <IconLabel
+                icon={ChevronLeftIcon}
+                label={preset === "this_month" ? "Previous month" : "Previous week"}
+                size={14}
+              />
             </button>
             <button
               type="button"
@@ -141,20 +145,32 @@ function ReflectViewInner({
               disabled={busy || periodOffset === 0}
               onClick={() => onPeriodOffsetChange(Math.min(0, periodOffset + 1))}
             >
-              <IconLabel icon={ChevronRightIcon} label={preset === "this_month" ? "Next month" : "Next week"} size={14} />
+              <IconLabel
+                icon={ChevronRightIcon}
+                label={preset === "this_month" ? "Next month" : "Next week"}
+                size={14}
+              />
             </button>
           </div>
           <div className="reflect-toolbar__group">
             <button
               type="button"
-              className={preset === "this_week" ? "button button--ghost reflect-toggle reflect-toggle--active" : "button button--ghost reflect-toggle"}
+              className={
+                preset === "this_week"
+                  ? "button button--ghost reflect-toggle reflect-toggle--active"
+                  : "button button--ghost reflect-toggle"
+              }
               onClick={() => onPresetChange("this_week")}
             >
               This Week
             </button>
             <button
               type="button"
-              className={preset === "this_month" ? "button button--ghost reflect-toggle reflect-toggle--active" : "button button--ghost reflect-toggle"}
+              className={
+                preset === "this_month"
+                  ? "button button--ghost reflect-toggle reflect-toggle--active"
+                  : "button button--ghost reflect-toggle"
+              }
               onClick={() => onPresetChange("this_month")}
             >
               This Month
@@ -168,7 +184,12 @@ function ReflectViewInner({
           >
             <IconLabel icon={RotateCwIcon} label="Refresh" size={14} />
           </button>
-          <button type="button" className="button button--ghost reflect-toggle" disabled={busy} onClick={onExportReport}>
+          <button
+            type="button"
+            className="button button--ghost reflect-toggle"
+            disabled={busy}
+            onClick={onExportReport}
+          >
             Export CSV
           </button>
         </div>
@@ -204,63 +225,85 @@ function ReflectViewInner({
             </div>
           </div>
 
-          <section className="panel reflect-panel">
-            <div className="panel__header">
-              <h2>Weekday Activity</h2>
-              <span className="badge">Active work</span>
-            </div>
-            <div className="reflect-weekday-list">
-              {summary.rhythms.weekdays.map((bucket) => {
-                const fillRatio = bucket.activeSeconds > 0 ? bucket.activeSeconds / maxWeekdayActiveSeconds : 0;
+          <section className="panel reflect-panel reflect-panel--rhythms">
+            <div className="reflect-rhythms-section">
+              <div className="panel__header">
+                <h2>Weekday Activity</h2>
+                <span className="badge">Active work</span>
+              </div>
+              <div className="reflect-weekday-list">
+                {summary.rhythms.weekdays.map((bucket) => {
+                  const fillRatio = bucket.activeSeconds > 0 ? Math.min(bucket.activeSeconds / dailyGoalSeconds, 1) : 0;
+                  const fillWidth =
+                    fillRatio <= 0 ? "0%" : `${Math.max(fillRatio * 100, 0.5).toFixed(2)}%`;
 
-                return (
-                  <div key={bucket.weekday} className="reflect-weekday-row">
-                    <div className="reflect-weekday-row__meta">
-                      <strong>{bucket.label}</strong>
-                      <span>{bucket.sessionStarts} starts</span>
-                    </div>
-                    <div className="reflect-weekday-row__bar-shell">
-                      <div className="reflect-weekday-row__bar-fill">
-                        <div
-                          className="reflect-weekday-row__bar"
-                          style={{ transform: `scaleX(${fillRatio})` }}
-                        />
+                  return (
+                    <div key={bucket.weekday} className="reflect-weekday-row">
+                      <div className="reflect-weekday-row__meta">
+                        <strong>{bucket.label}</strong>
+                        <span>{bucket.sessionStarts} starts</span>
+                      </div>
+                      <div className="reflect-weekday-row__bar-shell">
+                        <div className="reflect-weekday-row__bar" style={{ width: fillWidth }} />
+                      </div>
+                      <div className="reflect-weekday-row__value">
+                        <strong>{formatDuration(bucket.activeSeconds)}</strong>
+                        <span className="reflect-weekday-row__value-max">
+                          / {formatDuration(dailyGoalSeconds)}
+                        </span>
                       </div>
                     </div>
-                    <strong className="reflect-weekday-row__value">{formatDuration(bucket.activeSeconds)}</strong>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          <section className="panel reflect-panel">
-            <div className="panel__header">
-              <h2>Active-Work Heatmap</h2>
-              <span className="badge">Day x hour</span>
-            </div>
-            <div className="reflect-heatmap">
-              <div className="reflect-heatmap__header">
-                <span />
-                {Array.from({ length: 24 }, (_, hour) => (
-                  <span key={hour}>{hour.toString().padStart(2, "0")}</span>
-                ))}
+                  );
+                })}
               </div>
-              {summary.rhythms.weekdays.map((weekday) => (
-                <div key={weekday.weekday} className="reflect-heatmap__row">
-                  <strong className="reflect-heatmap__row-label">{weekday.label}</strong>
-                  {(heatmapByWeekday.get(weekday.weekday) ?? []).map((cell) => (
-                    <div
-                      key={`${cell.weekday}-${cell.hour}`}
-                      className="reflect-heatmap__cell"
-                      style={{
-                        opacity: cell.activeSeconds > 0 ? 0.18 + (cell.activeSeconds / maxHeatmapSeconds) * 0.82 : 0.08,
-                      }}
-                      title={`${weekday.label} ${cell.hourLabel} - ${formatDuration(cell.activeSeconds)}`}
-                    />
+            </div>
+
+            <div className="reflect-rhythms-divider" />
+
+            <div className="reflect-rhythms-section reflect-rhythms-section--heatmap">
+              <div className="panel__header">
+                <h2>Active-Work Heatmap</h2>
+                <span className="badge">Day x hour</span>
+              </div>
+              <div className="reflect-heatmap">
+                <div className="reflect-heatmap__header">
+                  <span />
+                  {Array.from({ length: 24 }, (_, hour) => (
+                    <span
+                      key={hour}
+                      className={hour >= 8 && hour <= 17 ? "reflect-heatmap__hour--work" : undefined}
+                    >
+                      {hour.toString().padStart(2, "0")}
+                    </span>
                   ))}
                 </div>
-              ))}
+                {summary.rhythms.weekdays.map((weekday) => (
+                  <div key={weekday.weekday} className="reflect-heatmap__row">
+                    <strong className="reflect-heatmap__row-label">{weekday.label}</strong>
+                    {(heatmapByWeekday.get(weekday.weekday) ?? []).map((cell) => (
+                      <div
+                        key={`${cell.weekday}-${cell.hour}`}
+                        className={
+                          cell.activeSeconds > 0
+                            ? "reflect-heatmap__cell"
+                            : "reflect-heatmap__cell reflect-heatmap__cell--empty"
+                        }
+                        title={
+                          cell.activeSeconds > 0
+                            ? `${weekday.label} ${cell.hour.toString().padStart(2, "0")}:00 - ${formatDuration(cell.activeSeconds)}`
+                            : undefined
+                        }
+                        style={{
+                          opacity:
+                            cell.activeSeconds > 0
+                              ? 0.18 + (cell.activeSeconds / maxHeatmapSeconds) * 0.82
+                              : undefined,
+                        }}
+                      />
+                    ))}
+                  </div>
+                ))}
+              </div>
             </div>
           </section>
 
@@ -280,11 +323,7 @@ function ReflectViewInner({
                   <strong>{formatDuration(summary.fragmentation.medianPauseSeconds)}</strong>
                 </div>
                 <div>
-                  <span>Longest block</span>
-                  <strong>{formatDuration(summary.fragmentation.longestActiveBlockSeconds)}</strong>
-                </div>
-                <div>
-                  <span>Avg block</span>
+                  <span>Avg work stretch</span>
                   <strong>{formatDuration(summary.fragmentation.averageActiveBlockSeconds)}</strong>
                 </div>
               </div>
@@ -356,7 +395,9 @@ function ReflectViewInner({
                   <button
                     key={session.sessionId}
                     type="button"
-                    className={selectedSession?.sessionId === session.sessionId ? "list-row list-row--active" : "list-row"}
+                    className={
+                      selectedSession?.sessionId === session.sessionId ? "list-row list-row--active" : "list-row"
+                    }
                     onClick={() => onSelectSession(session.sessionId)}
                   >
                     <span className="list-row__lead">
@@ -371,7 +412,9 @@ function ReflectViewInner({
                 ))}
               </div>
               <div className="pagination-row">
-                <span className="empty-state">Page {clampedPage + 1} of {pageCount}</span>
+                <span className="empty-state">
+                  Page {clampedPage + 1} of {pageCount}
+                </span>
                 <div className="button-row">
                   <button
                     type="button"
@@ -422,11 +465,7 @@ function ReflectViewInner({
                       <strong>{selectedSession.pauseCount}</strong>
                     </div>
                     <div>
-                      <span>Longest block</span>
-                      <strong>{formatDuration(selectedSession.longestActiveBlockSeconds)}</strong>
-                    </div>
-                    <div>
-                      <span>Avg block</span>
+                      <span>Avg work stretch</span>
                       <strong>{formatDuration(selectedSession.averageActiveBlockSeconds)}</strong>
                     </div>
                     <div>

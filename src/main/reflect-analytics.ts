@@ -488,7 +488,7 @@ export function buildReflectSummary(
 
   const checkpoints: ReflectCheckpointMetricsSummary = {
     reminderTriggeredCount: selectedPrompts.length,
-    reminderSnoozedCount: selectedPrompts.filter((prompt) => prompt.status === "snoozed").length,
+    reminderSnoozedCount: selectedPrompts.reduce((total, prompt) => total + prompt.snoozeCount, 0),
     reminderSkippedCount: selectedPrompts.filter((prompt) => prompt.status === "skipped").length,
     reminderCapturedCount: selectedPrompts.filter((prompt) => prompt.status === "captured").length,
     manualCheckpointCount: selectedCheckpoints.filter((checkpoint) => checkpoint.manualCheckpoint).length,

@@ -43,11 +43,43 @@ function getContentType(filePath: string): string {
     return "image/jpeg";
   }
 
+  if (filePath.endsWith(".webp")) {
+    return "image/webp";
+  }
+
+  if (filePath.endsWith(".bmp")) {
+    return "image/bmp";
+  }
+
+  if (filePath.endsWith(".gif")) {
+    return "image/gif";
+  }
+
+  if (filePath.endsWith(".mp4")) {
+    return "video/mp4";
+  }
+
+  if (filePath.endsWith(".webm")) {
+    return "video/webm";
+  }
+
+  if (filePath.endsWith(".mov")) {
+    return "video/quicktime";
+  }
+
+  if (filePath.endsWith(".mkv")) {
+    return "video/x-matroska";
+  }
+
   return "application/octet-stream";
 }
 
 function resolveRequestPath(request: IncomingMessage): string {
   const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+  if (requestUrl.pathname === "/__sessiontrail_asset") {
+    return normalize(requestUrl.searchParams.get("path") ?? "");
+  }
+
   const pathname = requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname;
   return normalize(join(getRendererRoot(), pathname));
 }

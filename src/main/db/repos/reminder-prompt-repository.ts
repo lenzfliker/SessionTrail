@@ -6,6 +6,7 @@ type ReminderPromptRow = {
   session_id: string;
   worked_offset_seconds: number;
   status: ReminderPromptEntity["status"];
+  snooze_count: number;
   snoozed_until: string | null;
   created_at: string;
   updated_at: string;
@@ -18,6 +19,7 @@ function mapReminderPromptRow(row: ReminderPromptRow): ReminderPromptEntity {
     sessionId: row.session_id,
     workedOffsetSeconds: row.worked_offset_seconds,
     status: row.status,
+    snoozeCount: row.snooze_count,
     snoozedUntil: row.snoozed_until,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -37,6 +39,7 @@ export class ReminderPromptRepository {
             session_id,
             worked_offset_seconds,
             status,
+            snooze_count,
             snoozed_until,
             created_at,
             updated_at,
@@ -46,6 +49,7 @@ export class ReminderPromptRepository {
             @sessionId,
             @workedOffsetSeconds,
             @status,
+            @snoozeCount,
             @snoozedUntil,
             @createdAt,
             @updatedAt,
@@ -65,6 +69,7 @@ export class ReminderPromptRepository {
             session_id = @sessionId,
             worked_offset_seconds = @workedOffsetSeconds,
             status = @status,
+            snooze_count = @snoozeCount,
             snoozed_until = @snoozedUntil,
             created_at = @createdAt,
             updated_at = @updatedAt,
@@ -84,6 +89,7 @@ export class ReminderPromptRepository {
             session_id,
             worked_offset_seconds,
             status,
+            snooze_count,
             snoozed_until,
             created_at,
             updated_at,
@@ -106,6 +112,7 @@ export class ReminderPromptRepository {
             session_id,
             worked_offset_seconds,
             status,
+            snooze_count,
             snoozed_until,
             created_at,
             updated_at,
@@ -130,6 +137,7 @@ export class ReminderPromptRepository {
             session_id,
             worked_offset_seconds,
             status,
+            snooze_count,
             snoozed_until,
             created_at,
             updated_at,

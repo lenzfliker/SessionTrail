@@ -4,9 +4,11 @@ import type { ExportTimelineSegmentEntity } from "../entities";
 type ExportTimelineSegmentRow = {
   id: string;
   session_id: string;
-  checkpoint_id: string;
+  source_kind: ExportTimelineSegmentEntity["sourceKind"];
+  source_id: string;
   start_offset_ms: number;
   end_offset_ms: number;
+  media_start_offset_ms: number;
   sort_order: number;
   source: ExportTimelineSegmentEntity["source"];
   created_at: string;
@@ -17,9 +19,11 @@ function mapExportTimelineSegmentRow(row: ExportTimelineSegmentRow): ExportTimel
   return {
     id: row.id,
     sessionId: row.session_id,
-    checkpointId: row.checkpoint_id,
+    sourceKind: row.source_kind,
+    sourceId: row.source_id,
     startOffsetMs: row.start_offset_ms,
     endOffsetMs: row.end_offset_ms,
+    mediaStartOffsetMs: row.media_start_offset_ms,
     sortOrder: row.sort_order,
     source: row.source,
     createdAt: row.created_at,
@@ -38,9 +42,11 @@ export class ExportTimelineSegmentRepository {
           INSERT INTO export_timeline_segments (
             id,
             session_id,
-            checkpoint_id,
+            source_kind,
+            source_id,
             start_offset_ms,
             end_offset_ms,
+            media_start_offset_ms,
             sort_order,
             source,
             created_at,
@@ -48,9 +54,11 @@ export class ExportTimelineSegmentRepository {
           ) VALUES (
             @id,
             @sessionId,
-            @checkpointId,
+            @sourceKind,
+            @sourceId,
             @startOffsetMs,
             @endOffsetMs,
+            @mediaStartOffsetMs,
             @sortOrder,
             @source,
             @createdAt,
@@ -74,9 +82,11 @@ export class ExportTimelineSegmentRepository {
           SELECT
             id,
             session_id,
-            checkpoint_id,
+            source_kind,
+            source_id,
             start_offset_ms,
             end_offset_ms,
+            media_start_offset_ms,
             sort_order,
             source,
             created_at,
@@ -97,10 +107,24 @@ export class ExportTimelineSegmentRepository {
         `
           SELECT COUNT(*) AS segment_count
           FROM export_timeline_segments
-          WHERE checkpoint_id = ?
+          WHERE source_kind = 'checkpoint' AND source_id = ?
         `
       )
       .get(checkpointId) as { segment_count: number } | undefined;
+
+    return row?.segment_count ?? 0;
+  }
+
+  public countByImportId(assetId: string): number {
+    const row = this.db
+      .prepare(
+        `
+          SELECT COUNT(*) AS segment_count
+          FROM export_timeline_segments
+          WHERE source_kind IN ('imported_image', 'imported_video') AND source_id = ?
+        `
+      )
+      .get(assetId) as { segment_count: number } | undefined;
 
     return row?.segment_count ?? 0;
   }

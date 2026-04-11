@@ -1,15 +1,18 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createReadStream, createWriteStream, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import { app, dialog } from "electron";
 import { patchAppState } from "./app-state";
 import { AudioAssetRepository } from "./db/repos/audio-asset-repository";
+import { ExportTimelineSegmentRepository } from "./db/repos/export-timeline-segment-repository";
+import { ImportedMediaAssetRepository } from "./db/repos/imported-media-asset-repository";
 import { VideoAssetRepository } from "./db/repos/video-asset-repository";
-import type { AudioAssetEntity, VideoAssetEntity } from "./db/entities";
+import type { AudioAssetEntity, ImportedMediaAssetEntity, VideoAssetEntity } from "./db/entities";
 import type {
   AudioAssetSummary,
+  ImportedMediaAssetSummary,
   MediaImportJobSummary,
   PreparedAudioPreview,
   SaveRecordedVoiceOverInput,
@@ -17,6 +20,9 @@ import type {
 } from "../shared/contracts";
 import { logInfo } from "./logger";
 import { probeMediaDurationMs, runFfmpeg } from "./media-utils";
+
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"]);
+const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm", ".mkv"]);
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -26,9 +32,28 @@ function ensureDir(path: string): void {
   mkdirSync(path, { recursive: true });
 }
 
+function getImportedMediaKind(filePath: string): ImportedMediaAssetEntity["kind"] {
+  const extension = extname(filePath).toLowerCase();
+  if (IMAGE_EXTENSIONS.has(extension)) {
+    return "image";
+  }
+
+  if (VIDEO_EXTENSIONS.has(extension)) {
+    return "video";
+  }
+
+  throw new Error(`Unsupported media type for ${filePath}.`);
+}
+
+function toImportedMediaSummary(asset: ImportedMediaAssetEntity): ImportedMediaAssetSummary {
+  return asset;
+}
+
 export class MediaService {
   private readonly audioAssetRepository: AudioAssetRepository;
   private readonly videoAssetRepository: VideoAssetRepository;
+  private readonly importedMediaAssetRepository: ImportedMediaAssetRepository;
+  private readonly exportTimelineSegmentRepository: ExportTimelineSegmentRepository;
   private activeImportJob: MediaImportJobSummary | null = null;
   private clearCompletedImportJobTimer: NodeJS.Timeout | null = null;
   private readonly pendingAudioPreviewRenders = new Map<string, Promise<string>>();
@@ -36,6 +61,8 @@ export class MediaService {
   public constructor(db: Database.Database) {
     this.audioAssetRepository = new AudioAssetRepository(db);
     this.videoAssetRepository = new VideoAssetRepository(db);
+    this.importedMediaAssetRepository = new ImportedMediaAssetRepository(db);
+    this.exportTimelineSegmentRepository = new ExportTimelineSegmentRepository(db);
   }
 
   public async saveRecording(input: SaveRecordedVoiceOverInput): Promise<AudioAssetSummary> {
@@ -90,36 +117,88 @@ export class MediaService {
     };
   }
 
-  public async importAppendix(sessionId: string): Promise<VideoAssetSummary | null> {
+  public async importAssets(sessionId: string): Promise<ImportedMediaAssetSummary[]> {
     const result = await dialog.showOpenDialog({
-      title: "Import appendix clip",
-      properties: ["openFile"],
+      title: "Import images or videos",
+      properties: ["openFile", "multiSelections"],
       filters: [
-        { name: "Video", extensions: ["mp4", "mov", "webm", "mkv"] }
+        { name: "Images and Video", extensions: [...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS].map((extension) => extension.slice(1)) }
       ]
     });
 
     if (result.canceled || result.filePaths.length === 0) {
-      return null;
+      return [];
     }
 
     const importedAt = nowIso();
-    const sourcePath = result.filePaths[0];
-    const targetDir = join(app.getPath("userData"), "assets", "video", sessionId);
-    const extension = extname(sourcePath) || ".mp4";
-    const filePath = join(targetDir, `appendix-${importedAt.replace(/[:.]/g, "-")}${extension}`);
+    const targetDir = join(app.getPath("userData"), "assets", "imports", sessionId);
+    ensureDir(targetDir);
+    this.startImportJob(sessionId, "imported_media");
 
-    return this.importAppendixFromPath({
-      sessionId,
-      sourcePath,
-      targetDir,
-      filePath,
-      importedAt
-    });
+    try {
+      const importedAssets: ImportedMediaAssetSummary[] = [];
+      const totalFiles = result.filePaths.length;
+
+      for (let index = 0; index < totalFiles; index += 1) {
+        const sourcePath = result.filePaths[index];
+        const kind = getImportedMediaKind(sourcePath);
+        const extension = extname(sourcePath).toLowerCase() || (kind === "image" ? ".png" : ".mp4");
+        const filePath = join(targetDir, `${kind}-${importedAt.replace(/[:.]/g, "-")}-${index + 1}${extension}`);
+        await this.copyFileWithProgress(sourcePath, filePath, {
+          startRatio: index / totalFiles,
+          endRatio: (index + 0.9) / totalFiles,
+          message: `Copying ${index + 1} of ${totalFiles}`
+        });
+
+        this.updateImportJob({
+          progressRatio: (index + 0.93) / totalFiles,
+          message: `Analyzing ${index + 1} of ${totalFiles}`
+        });
+
+        const durationMs = kind === "video" ? await probeMediaDurationMs(filePath) : null;
+        const asset: ImportedMediaAssetEntity = {
+          id: randomUUID(),
+          sessionId,
+          kind,
+          filePath,
+          durationMs,
+          createdAt: importedAt
+        };
+
+        this.importedMediaAssetRepository.create(asset);
+        importedAssets.push(toImportedMediaSummary(asset));
+      }
+
+      logInfo("Imported session media assets.", { sessionId, importedAssetCount: importedAssets.length });
+      this.completeImportJob("Ready");
+      return importedAssets;
+    } catch (error) {
+      this.failImportJob(error);
+      throw error;
+    }
   }
 
-  public getLatestAppendix(sessionId: string): VideoAssetSummary | null {
-    return this.videoAssetRepository.findLatestBySessionAndType(sessionId, "imported_appendix");
+  public listImports(sessionId: string): ImportedMediaAssetSummary[] {
+    return this.importedMediaAssetRepository.listBySessionId(sessionId).map(toImportedMediaSummary);
+  }
+
+  public getImportById(assetId: string): ImportedMediaAssetSummary | null {
+    const asset = this.importedMediaAssetRepository.findById(assetId);
+    return asset ? toImportedMediaSummary(asset) : null;
+  }
+
+  public deleteImport(assetId: string): void {
+    const asset = this.importedMediaAssetRepository.findById(assetId);
+    if (!asset) {
+      throw new Error("Imported media was not found.");
+    }
+
+    if (this.exportTimelineSegmentRepository.countByImportId(assetId) > 0) {
+      throw new Error("This imported media is still used in the timeline.");
+    }
+
+    this.importedMediaAssetRepository.deleteById(assetId);
+    unlinkSync(asset.filePath);
   }
 
   public getVideoAssetById(videoAssetId: string): VideoAssetSummary | null {
@@ -145,6 +224,7 @@ export class MediaService {
     const rootPaths = [
       join(app.getPath("userData"), "assets", "audio", sessionId),
       join(app.getPath("userData"), "assets", "video", sessionId),
+      join(app.getPath("userData"), "assets", "imports", sessionId),
       join(app.getPath("userData"), "assets", "screenshots", sessionId),
       join(app.getPath("userData"), "exports", "final", sessionId)
     ];
@@ -200,47 +280,6 @@ export class MediaService {
     return previewPath;
   }
 
-  private async importAppendixFromPath({
-    sessionId,
-    sourcePath,
-    targetDir,
-    filePath,
-    importedAt
-  }: {
-    sessionId: string;
-    sourcePath: string;
-    targetDir: string;
-    filePath: string;
-    importedAt: string;
-  }): Promise<VideoAssetSummary> {
-    ensureDir(targetDir);
-    this.startImportJob(sessionId, "appendix");
-
-    try {
-      await this.copyFileWithProgress(sourcePath, filePath);
-      this.updateImportJob({ progressRatio: 0.94, message: "Analyzing media" });
-
-      const durationMs = await probeMediaDurationMs(filePath);
-      const asset: VideoAssetEntity = {
-        id: randomUUID(),
-        sessionId,
-        type: "imported_appendix",
-        filePath,
-        durationMs,
-        createdAt: importedAt
-      };
-
-      this.videoAssetRepository.create(asset);
-      logInfo("Imported appendix video.", { sessionId, videoAssetId: asset.id });
-      this.completeImportJob("Ready");
-      return asset;
-    } catch (error) {
-      rmSync(filePath, { force: true });
-      this.failImportJob(error);
-      throw error;
-    }
-  }
-
   private startImportJob(sessionId: string, mediaKind: MediaImportJobSummary["mediaKind"]): void {
     if (this.activeImportJob?.status === "running") {
       throw new Error("Another media import is already in progress.");
@@ -266,7 +305,11 @@ export class MediaService {
     this.setImportJob(job);
   }
 
-  private async copyFileWithProgress(sourcePath: string, targetPath: string): Promise<void> {
+  private async copyFileWithProgress(
+    sourcePath: string,
+    targetPath: string,
+    options: { startRatio: number; endRatio: number; message: string }
+  ): Promise<void> {
     const sourceStat = await stat(sourcePath);
     const totalBytes = Math.max(1, sourceStat.size);
     let copiedBytes = 0;
@@ -279,47 +322,59 @@ export class MediaService {
       const input = createReadStream(sourcePath);
       const output = createWriteStream(targetPath);
 
-      const fail = (error: Error) => {
+      const cleanup = (error?: Error) => {
         input.destroy();
         output.destroy();
-        reject(error);
-      };
-
-      const emitProgress = (force: boolean) => {
-        const ratio = Math.min(0.92, (copiedBytes / totalBytes) * 0.92);
-        const now = Date.now();
-        if (!force && ratio - lastEmittedRatio < 0.015 && now - lastEmitAt < 90) {
-          return;
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
         }
-
-        lastEmittedRatio = ratio;
-        lastEmitAt = now;
-        this.updateImportJob({
-          progressRatio: ratio,
-          message: copiedBytes >= totalBytes ? "Analyzing media" : "Copying"
-        });
       };
 
       input.on("data", (chunk) => {
         copiedBytes += chunk.length;
-        emitProgress(false);
+        const baseRatio = copiedBytes / totalBytes;
+        const scaledRatio = options.startRatio + (options.endRatio - options.startRatio) * baseRatio;
+        const now = Date.now();
+        if (scaledRatio - lastEmittedRatio >= 0.01 || now - lastEmitAt >= 150) {
+          lastEmittedRatio = scaledRatio;
+          lastEmitAt = now;
+          this.updateImportJob({
+            progressRatio: scaledRatio,
+            message: options.message
+          });
+        }
       });
 
-      input.on("error", (error) => fail(error));
-      output.on("error", (error) => fail(error));
-      output.on("finish", () => {
-        copiedBytes = totalBytes;
-        emitProgress(true);
-        resolve();
-      });
-
+      input.once("error", (error) => cleanup(error));
+      output.once("error", (error) => cleanup(error));
+      output.once("close", () => cleanup());
       input.pipe(output);
     });
   }
 
-  private setImportJob(job: MediaImportJobSummary | null): void {
-    this.activeImportJob = job;
-    patchAppState({ activeMediaImportJob: job });
+  private completeImportJob(message: string): void {
+    this.updateImportJob({
+      status: "completed",
+      progressRatio: 1,
+      message,
+      errorMessage: null
+    });
+
+    this.clearCompletedImportJobTimer = setTimeout(() => {
+      this.setImportJob(null);
+      this.clearCompletedImportJobTimer = null;
+    }, 2_000);
+  }
+
+  private failImportJob(error: unknown): void {
+    this.updateImportJob({
+      status: "failed",
+      progressRatio: 1,
+      message: "Import failed",
+      errorMessage: error instanceof Error ? error.message : "Unexpected import error"
+    });
   }
 
   private updateImportJob(partial: Partial<MediaImportJobSummary>): void {
@@ -334,40 +389,8 @@ export class MediaService {
     });
   }
 
-  private completeImportJob(message: string): void {
-    if (!this.activeImportJob) {
-      return;
-    }
-
-    this.setImportJob({
-      ...this.activeImportJob,
-      status: "completed",
-      progressRatio: 1,
-      message,
-      updatedAt: nowIso(),
-      errorMessage: null
-    });
-
-    this.clearCompletedImportJobTimer = setTimeout(() => {
-      if (this.activeImportJob?.status === "completed") {
-        this.setImportJob(null);
-      }
-      this.clearCompletedImportJobTimer = null;
-    }, 1400);
-  }
-
-  private failImportJob(error: unknown): void {
-    if (!this.activeImportJob) {
-      return;
-    }
-
-    this.setImportJob({
-      ...this.activeImportJob,
-      status: "failed",
-      progressRatio: this.activeImportJob.progressRatio,
-      message: "Import failed",
-      updatedAt: nowIso(),
-      errorMessage: error instanceof Error ? error.message : "Unexpected media import error"
-    });
+  private setImportJob(job: MediaImportJobSummary | null): void {
+    this.activeImportJob = job;
+    patchAppState({ activeMediaImportJob: job });
   }
 }

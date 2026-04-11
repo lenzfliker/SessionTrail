@@ -15,6 +15,7 @@ import { stopRendererServer } from "./renderer-server";
 import { ReminderScheduler } from "./scheduler";
 import { SessionMachine } from "./session-machine";
 import { SettingsService } from "./settings-service";
+import { SnailPetService } from "./pet/snail-pet-service";
 import { createTray, refreshTrayMenu } from "./tray";
 import {
   createDashboardWindow,
@@ -52,6 +53,7 @@ let mediaService: MediaService | null = null;
 let exportService: ExportService | null = null;
 let settingsService: SettingsService | null = null;
 let reflectService: ReflectService | null = null;
+let snailPetService: SnailPetService | null = null;
 let suspendedSessionId: string | null = null;
 
 function reportMainProcessError(message: string, error?: unknown): void {
@@ -102,6 +104,7 @@ async function bootstrap(): Promise<void> {
   settingsService = new SettingsService();
   const settings = settingsService.initialize();
   patchAppState({ settings });
+  snailPetService = new SnailPetService();
   registerProcessErrorHandlers();
   logInfo("Bootstrapping SessionTrail.");
 
@@ -131,9 +134,11 @@ async function bootstrap(): Promise<void> {
     mediaService,
     exportService,
     settingsService,
-    reflectService
+    reflectService,
+    snailPetService
   );
   await createDashboardWindow();
+  await snailPetService.applySettings(settings);
 
   const trayOptions = {
     onToggleDashboard: wrapAction("Toggle dashboard", async () => {
@@ -187,6 +192,18 @@ async function bootstrap(): Promise<void> {
 
       sessionMachine.cancel();
       showDashboardWindow();
+    }),
+    onShowSnail: wrapAction("Show snail", async () => {
+      await snailPetService?.show();
+    }),
+    onHideSnail: wrapAction("Hide snail", async () => {
+      snailPetService?.hide();
+    }),
+    onPauseSnail: wrapAction("Pause snail", async () => {
+      snailPetService?.pause();
+    }),
+    onResumeSnail: wrapAction("Resume snail", async () => {
+      snailPetService?.resume();
     }),
     onQuit: wrapAction("Quit application", async () => {
       app.quit();
@@ -285,6 +302,7 @@ app.on("before-quit", () => {
   sessionMachine?.flushForAppShutdown();
   recoveryService?.markCleanShutdown();
   logInfo("Preparing for quit.");
+  snailPetService?.dispose();
   prepareForQuit();
   stopRendererServer();
   closeDatabase();

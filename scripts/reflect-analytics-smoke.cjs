@@ -238,6 +238,7 @@ async function main() {
       sessionId: "session-week-complete",
       workedOffsetSeconds: 900,
       status: "captured",
+      snoozeCount: 0,
       snoozedUntil: null,
       createdAt: localIso(2026, 4, 7, 9, 14),
       updatedAt: localIso(2026, 4, 7, 9, 15),
@@ -247,17 +248,19 @@ async function main() {
       id: "prompt-2",
       sessionId: "session-week-paused",
       workedOffsetSeconds: 1080,
-      status: "snoozed",
-      snoozedUntil: localIso(2026, 4, 9, 6, 25),
+      status: "captured",
+      snoozeCount: 2,
+      snoozedUntil: null,
       createdAt: localIso(2026, 4, 9, 6, 18),
-      updatedAt: localIso(2026, 4, 9, 6, 19),
-      resolvedAt: null,
+      updatedAt: localIso(2026, 4, 9, 6, 25),
+      resolvedAt: localIso(2026, 4, 9, 6, 25),
     },
     {
       id: "prompt-3",
       sessionId: "session-month-midnight",
       workedOffsetSeconds: 1500,
       status: "skipped",
+      snoozeCount: 1,
       snoozedUntil: null,
       createdAt: localIso(2026, 4, 2, 0, 12),
       updatedAt: localIso(2026, 4, 2, 0, 12),
@@ -329,8 +332,7 @@ async function main() {
   assert.equal(midnightHeatCell.activeSeconds > 0, true, "Heatmap should record post-midnight active work.");
 
   assert.equal(weekSummary.fragmentation.totalPauseCount, 2, "Week pause count should include paused segments.");
-  assert.equal(weekSummary.fragmentation.longestActiveBlockSeconds, 3600, "Open active sessions should use live worked time.");
-  assert.equal(weekSummary.fragmentation.averageActiveBlockSeconds > 0, true, "Average active block should be derived.");
+  assert.equal(weekSummary.fragmentation.averageActiveBlockSeconds > 0, true, "Average work stretch should be derived.");
 
   assert.equal(weekSummary.interruptions.suspendCount, 1, "Week interruptions should count suspend.");
   assert.equal(weekSummary.interruptions.appExitCount, 1, "Week interruptions should count app_exit.");
@@ -338,11 +340,12 @@ async function main() {
   assert.equal(monthSummary.interruptions.crashRecoveryCount, 1, "Month interruptions should include crash recovery.");
 
   assert.equal(weekSummary.checkpoints.reminderTriggeredCount, 2, "Week prompts should count triggered reminders.");
-  assert.equal(weekSummary.checkpoints.reminderSnoozedCount, 1, "Week prompts should count snoozed reminders.");
-  assert.equal(weekSummary.checkpoints.reminderCapturedCount, 1, "Week prompts should count captured reminders.");
+  assert.equal(weekSummary.checkpoints.reminderSnoozedCount, 2, "Week prompts should count historical snooze actions.");
+  assert.equal(weekSummary.checkpoints.reminderCapturedCount, 2, "Week prompts should count captured reminders.");
   assert.equal(weekSummary.checkpoints.manualCheckpointCount, 1, "Week checkpoints should count manual captures.");
   assert.equal(weekSummary.checkpoints.abandonedCheckpointCount, 1, "Week checkpoints should count abandoned shells.");
   assert.equal(monthSummary.checkpoints.reminderSkippedCount, 1, "Month prompts should count skipped reminders.");
+  assert.equal(monthSummary.checkpoints.reminderSnoozedCount, 3, "Month prompts should include snooze history across prompts.");
 
   const activeSessionDetail = weekSummary.sessions.find((session) => session.sessionId === "session-week-active");
   assert.ok(activeSessionDetail, "Open active session should appear in detail list.");
@@ -355,7 +358,7 @@ async function main() {
   console.log("Reflect analytics smoke passed.", {
     weekSessions: weekSummary.overview.totalSessions,
     monthSessions: monthSummary.overview.totalSessions,
-    weekLongestBlock: weekSummary.fragmentation.longestActiveBlockSeconds,
+    weekAverageStretch: weekSummary.fragmentation.averageActiveBlockSeconds,
   });
 }
 

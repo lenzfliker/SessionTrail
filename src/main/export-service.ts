@@ -7,22 +7,22 @@ import { app, dialog, shell } from "electron";
 import { patchAppState } from "./app-state";
 import { resolveAppAssetPath } from "./asset-paths";
 import { CheckpointRepository } from "./db/repos/checkpoint-repository";
+import { ImportedMediaAssetRepository } from "./db/repos/imported-media-asset-repository";
 import { ScreenshotAssetRepository } from "./db/repos/screenshot-asset-repository";
 import { AudioAssetRepository } from "./db/repos/audio-asset-repository";
 import { SessionRepository } from "./db/repos/session-repository";
-import { VideoAssetRepository } from "./db/repos/video-asset-repository";
 import { ExportCompositionService } from "./export-composition-service";
 import { MediaService } from "./media-service";
-import { probeAudioStreamInfo, probeMediaDurationMs, runFfmpegWithHandle } from "./media-utils";
+import { probeMediaDurationMs, runFfmpegWithHandle } from "./media-utils";
 import { logError, logInfo } from "./logger";
 import { RUNTIME_STATE_KEYS, RuntimeStateStore } from "./runtime-state-store";
 import type { SettingsService } from "./settings-service";
-import type { ExportJobSummary, ExportRunInput } from "../shared/contracts";
+import type { ExportJobSummary, ExportRunInput, ExportTimelineSegmentSummary } from "../shared/contracts";
 
 const SLIDE_WIDTH = 1280;
 const SLIDE_HEIGHT = 720;
 const SLIDE_FPS = 30;
-const TITLE_CARD_DURATION_SECONDS = 1;
+const TITLE_CARD_DURATION_SECONDS = 2;
 const AUDIO_SAMPLE_RATE_HZ = 48_000;
 const AUDIO_CHANNELS = 2;
 const AUDIO_BITRATE = "192k";
@@ -69,7 +69,7 @@ export class ExportService {
   private readonly screenshotAssetRepository: ScreenshotAssetRepository;
   private readonly audioAssetRepository: AudioAssetRepository;
   private readonly sessionRepository: SessionRepository;
-  private readonly videoAssetRepository: VideoAssetRepository;
+  private readonly importedMediaAssetRepository: ImportedMediaAssetRepository;
   private readonly exportCompositionService: ExportCompositionService;
   private readonly mediaService: MediaService;
   private readonly runtimeStateStore: RuntimeStateStore;
@@ -82,7 +82,7 @@ export class ExportService {
     this.checkpointRepository = new CheckpointRepository(db);
     this.screenshotAssetRepository = new ScreenshotAssetRepository(db);
     this.audioAssetRepository = new AudioAssetRepository(db);
-    this.videoAssetRepository = new VideoAssetRepository(db);
+    this.importedMediaAssetRepository = new ImportedMediaAssetRepository(db);
     this.exportCompositionService = new ExportCompositionService(db, settingsService);
     this.mediaService = new MediaService(db);
     this.runtimeStateStore = new RuntimeStateStore(db);
@@ -147,9 +147,11 @@ export class ExportService {
       durationMs: composition.durationMs,
       segments: composition.segments.map((segment) => ({
         id: segment.id,
-        checkpointId: segment.checkpointId,
+        sourceKind: segment.sourceKind,
+        sourceId: segment.sourceId,
         startOffsetMs: segment.startOffsetMs,
         endOffsetMs: segment.endOffsetMs,
+        mediaStartOffsetMs: segment.mediaStartOffsetMs,
         sortOrder: segment.sortOrder,
         source: segment.source
       }))
@@ -231,10 +233,6 @@ export class ExportService {
       const voiceOver = resolvedVoiceOverAssetId
         ? this.audioAssetRepository.findById(resolvedVoiceOverAssetId)
         : null;
-      const resolvedAppendixVideoAssetId = input.appendixVideoAssetId ?? composition.appendixVideoAssetId;
-      const appendixVideo = resolvedAppendixVideoAssetId
-        ? this.videoAssetRepository.findById(resolvedAppendixVideoAssetId)
-        : null;
 
       this.updateJob({
         progressRatio: 0.05,
@@ -246,7 +244,7 @@ export class ExportService {
         this.throwIfCanceled();
         const segment = composition.segments[index];
         const slidePath = join(jobDir, `slide-${index + 1}.mp4`);
-        await this.renderSegmentClip(segment.checkpointId, slidePath, (segment.endOffsetMs - segment.startOffsetMs) / 1000);
+        await this.renderSegmentClip(segment, slidePath);
         slideClipPaths.push(slidePath);
         this.updateJob({
           progressRatio: 0.1 + ((index + 1) / composition.segments.length) * 0.35,
@@ -285,18 +283,7 @@ export class ExportService {
       this.throwIfCanceled();
       await this.renderOutroCard(outroCardPath);
 
-      const finalSourcePaths = [introCardPath, slideshowPath];
-      if (appendixVideo) {
-        const normalizedAppendixPath = join(jobDir, "appendix.mp4");
-        this.updateJob({
-          progressRatio: 0.7,
-          message: "Preparing appendix clip"
-        });
-        this.throwIfCanceled();
-        await this.normalizeAppendix(appendixVideo.filePath, normalizedAppendixPath);
-        finalSourcePaths.push(normalizedAppendixPath);
-      }
-      finalSourcePaths.push(outroCardPath);
+      const finalSourcePaths = [introCardPath, slideshowPath, outroCardPath];
 
       const concatListPath = join(jobDir, "concat.txt");
       writeFileSync(
@@ -377,6 +364,24 @@ export class ExportService {
   }
 
   private async renderSegmentClip(
+    segment: ExportTimelineSegmentSummary,
+    outputPath: string
+  ): Promise<void> {
+    const durationSeconds = Math.max(0.5, (segment.endOffsetMs - segment.startOffsetMs) / 1000);
+    if (segment.sourceKind === "checkpoint") {
+      await this.renderCheckpointSegmentClip(segment.sourceId, outputPath, durationSeconds);
+      return;
+    }
+
+    if (segment.sourceKind === "imported_image") {
+      await this.renderImportedImageClip(segment.sourceId, outputPath, durationSeconds);
+      return;
+    }
+
+    await this.renderImportedVideoClip(segment, outputPath, durationSeconds);
+  }
+
+  private async renderCheckpointSegmentClip(
     checkpointId: string,
     outputPath: string,
     durationSeconds: number
@@ -420,6 +425,75 @@ export class ExportService {
     ]);
   }
 
+  private async renderImportedImageClip(
+    assetId: string,
+    outputPath: string,
+    durationSeconds: number
+  ): Promise<void> {
+    const asset = this.importedMediaAssetRepository.findById(assetId);
+    if (!asset || asset.kind !== "image") {
+      throw new Error(`Imported image ${assetId} was not found.`);
+    }
+
+    await this.runFfmpeg([
+      "-y",
+      "-loop",
+      "1",
+      "-t",
+      durationSeconds.toFixed(2),
+      "-i",
+      asset.filePath,
+      "-vf",
+      `scale=${SLIDE_WIDTH}:${SLIDE_HEIGHT}:force_original_aspect_ratio=decrease,pad=${SLIDE_WIDTH}:${SLIDE_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=white`,
+      "-r",
+      String(SLIDE_FPS),
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      outputPath
+    ]);
+  }
+
+  private async renderImportedVideoClip(
+    segment: ExportTimelineSegmentSummary,
+    outputPath: string,
+    durationSeconds: number
+  ): Promise<void> {
+    const asset = this.importedMediaAssetRepository.findById(segment.sourceId);
+    if (!asset || asset.kind !== "video") {
+      throw new Error(`Imported video ${segment.sourceId} was not found.`);
+    }
+
+    const clipStartSeconds = Math.max(0, segment.mediaStartOffsetMs / 1000);
+    const remainingSeconds = Math.max(0, ((asset.durationMs ?? 0) - segment.mediaStartOffsetMs) / 1000);
+    const freezeSeconds = Math.max(0, durationSeconds - remainingSeconds);
+    const scalePad = `scale=${SLIDE_WIDTH}:${SLIDE_HEIGHT}:force_original_aspect_ratio=decrease,pad=${SLIDE_WIDTH}:${SLIDE_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=white`;
+    const filter = freezeSeconds > 0.02
+      ? `${scalePad},tpad=stop_mode=clone:stop_duration=${freezeSeconds.toFixed(2)}`
+      : scalePad;
+
+    await this.runFfmpeg([
+      "-y",
+      "-ss",
+      clipStartSeconds.toFixed(2),
+      "-i",
+      asset.filePath,
+      "-vf",
+      filter,
+      "-an",
+      "-t",
+      durationSeconds.toFixed(2),
+      "-r",
+      String(SLIDE_FPS),
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      outputPath
+    ]);
+  }
+
   private async renderSlideshow(
     slidesListPath: string,
     outputPath: string,
@@ -442,20 +516,20 @@ export class ExportService {
         "0",
         "-i",
         slidesListPath,
-        "-t",
-        effectiveDurationSeconds.toFixed(2),
         "-i",
         voiceOver.filePath,
+        "-filter_complex",
+        `[1:a]aresample=async=1:first_pts=0,apad=pad_dur=${Math.max(0, effectiveDurationSeconds).toFixed(2)}[aout]`,
+        "-t",
+        effectiveDurationSeconds.toFixed(2),
         "-map",
         "0:v",
         "-map",
-        "1:a",
+        "[aout]",
         "-c:v",
         "libx264",
         "-c:a",
         "aac",
-        "-af",
-        "aresample=async=1:first_pts=0",
         "-b:a",
         AUDIO_BITRATE,
         "-ar",
@@ -464,7 +538,6 @@ export class ExportService {
         String(AUDIO_CHANNELS),
         "-pix_fmt",
         "yuv420p",
-        "-shortest",
         outputPath
       ]);
       return;
@@ -583,39 +656,6 @@ export class ExportService {
       "-shortest",
       outputPath
     ]);
-  }
-
-  private async normalizeAppendix(inputPath: string, outputPath: string): Promise<void> {
-    const sourceAudioInfo = await probeAudioStreamInfo(inputPath);
-    logInfo("Normalizing appendix audio stream.", { inputPath, sourceAudioInfo });
-
-    await this.runFfmpeg([
-      "-y",
-      "-i",
-      inputPath,
-      "-vf",
-      `scale=${SLIDE_WIDTH}:${SLIDE_HEIGHT}:force_original_aspect_ratio=decrease,pad=${SLIDE_WIDTH}:${SLIDE_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=white`,
-      "-af",
-      "aresample=async=1:first_pts=0",
-      "-r",
-      String(SLIDE_FPS),
-      "-c:v",
-      "libx264",
-      "-c:a",
-      "aac",
-      "-b:a",
-      AUDIO_BITRATE,
-      "-ar",
-      String(AUDIO_SAMPLE_RATE_HZ),
-      "-ac",
-      String(AUDIO_CHANNELS),
-      "-pix_fmt",
-      "yuv420p",
-      outputPath
-    ]);
-
-    const normalizedAudioInfo = await probeAudioStreamInfo(outputPath);
-    logInfo("Normalized appendix audio stream.", { outputPath, normalizedAudioInfo });
   }
 
   private setActiveJob(job: ExportJobSummary | null): void {

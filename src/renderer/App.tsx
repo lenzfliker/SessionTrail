@@ -35,6 +35,7 @@ import {
 import type {
   AppState,
   ExportCompositionSummary,
+  ImportedMediaAssetSummary,
   ReflectQuery,
   ReflectRangePreset,
   ReflectSummary,
@@ -52,6 +53,7 @@ import {
   getWorkedSecondsForDisplay,
   normalizeCompositionDuration,
   RecordingMarker,
+  type VisualSourceSelection,
   resizeBoundary,
   sortSegments
 } from "./utils";
@@ -60,8 +62,9 @@ type ViewMode = "track" | "compose" | "reflect" | "settings";
 type DragState = { segmentId: string; edge: "start" | "end" } | null;
 type PreviewSelectionState = {
   sessionId: string | null;
-  armedCheckpointId: string | null;
+  armedVisualSource: VisualSourceSelection | null;
   selectedCheckpointId: string | null;
+  selectedImportId: string | null;
   selectedSegmentId: string | null;
 };
 
@@ -87,6 +90,7 @@ const placeholderState: AppState = {
   status: "booting",
   trayReady: false,
   dashboardVisibility: "hidden",
+  dashboardFullscreen: false,
   activeSession: null,
   recentSessions: [],
   pendingRecovery: null,
@@ -101,12 +105,21 @@ const placeholderState: AppState = {
     launchAtLogin: false,
     captureDelaySeconds: 2,
     reminderSnoozeMinutes: 1,
+    reflectDailyGoalMinutes: 480,
     startupDashboardBehavior: "tray_only",
     openDashboardOnReminder: false,
     defaultExportDirectory: "",
     uiSoundsEnabled: true,
     uiMotionEnabled: true,
+    snailPetEnabled: false,
+    snailPetScale: 3,
+    snailPetSpeed: "normal",
     theme: "clean"
+  },
+  snailPet: {
+    visible: false,
+    paused: false,
+    behaviorState: null
   },
   lastErrorMessage: null
 };
@@ -132,11 +145,15 @@ export function App() {
     launchAtLogin: false,
     captureDelaySeconds: 2,
     reminderSnoozeMinutes: 1,
+    reflectDailyGoalMinutes: 480,
     startupDashboardBehavior: "tray_only",
     openDashboardOnReminder: false,
     defaultExportDirectory: "",
     uiSoundsEnabled: true,
-    uiMotionEnabled: true
+    uiMotionEnabled: true,
+    snailPetEnabled: false,
+    snailPetScale: 3,
+    snailPetSpeed: "normal"
   });
   const [historyQuery, setHistoryQuery] = useState("");
   const deferredHistoryQuery = useDeferredValue(historyQuery);
@@ -156,6 +173,7 @@ export function App() {
   const [reflectRefreshToken, setReflectRefreshToken] = useState(0);
   const [preparedVoiceOverPreviewUrl, setPreparedVoiceOverPreviewUrl] = useState<string | null>(null);
   const [voiceOverPreviewPreparing, setVoiceOverPreviewPreparing] = useState(false);
+  const [currentImportVideoPlaybackMs, setCurrentImportVideoPlaybackMs] = useState(0);
   const trackRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioPreviewFrameRef = useRef<number | null>(null);
@@ -169,11 +187,14 @@ export function App() {
   const previewSegmentIdRef = useRef<string | null>(null);
   const previewSelectionRestoreRef = useRef<PreviewSelectionState | null>(null);
   const selectedSessionIdRef = useRef<string | null>(null);
-  const armedCheckpointIdRef = useRef<string | null>(null);
+  const armedVisualSourceRef = useRef<VisualSourceSelection | null>(null);
   const selectedCheckpointIdRef = useRef<string | null>(null);
+  const selectedImportIdRef = useRef<string | null>(null);
   const selectedSegmentIdRef = useRef<string | null>(null);
   const pendingPreparedVoicePreviewPlaybackRef = useRef(false);
   const preparedVoiceOverPreviewUrlRef = useRef<string | null>(null);
+  const importVideoPlaybackMsRef = useRef<Record<string, number>>({});
+  const importVideoEndedRef = useRef<Record<string, boolean>>({});
   const { motionEnabled, play: playFeedback } = useRetroFeedback(
     state.settings.uiSoundsEnabled,
     state.settings.uiMotionEnabled
@@ -182,9 +203,9 @@ export function App() {
   const previousStateRef = useRef<AppState>(placeholderState);
   const {
     timelineItems,
+    importedMedia,
     voiceOver,
     setVoiceOver,
-    appendixVideo,
     composition,
     setComposition,
     compositionDirty,
@@ -193,10 +214,12 @@ export function App() {
     setSelectedSegmentId,
     selectedCheckpointId,
     setSelectedCheckpointId,
+    selectedImportId,
+    setSelectedImportId,
     playheadMs,
     setPlayheadMs,
-    armedCheckpointId,
-    setArmedCheckpointId,
+    armedVisualSource,
+    setArmedVisualSource,
     audioPreviewDurationMs,
     setAudioPreviewDurationMs,
     audioCurrentTimeMs,
@@ -205,9 +228,13 @@ export function App() {
     loadedSessionId,
     sessionSwitching,
     checkpointsById,
+    importedMediaById,
     selectedSegment,
     selectedCheckpoint,
+    selectedImport,
+    previewSegment,
     previewCheckpoint,
+    previewImport,
     effectiveVoiceDurationMs,
     selectedCheckpointThumbnailUrl,
     selectedCheckpointPreviewUrl,
@@ -334,11 +361,15 @@ export function App() {
       launchAtLogin: state.settings.launchAtLogin,
       captureDelaySeconds: state.settings.captureDelaySeconds,
       reminderSnoozeMinutes: state.settings.reminderSnoozeMinutes,
+      reflectDailyGoalMinutes: state.settings.reflectDailyGoalMinutes,
       startupDashboardBehavior: state.settings.startupDashboardBehavior,
       openDashboardOnReminder: state.settings.openDashboardOnReminder,
       defaultExportDirectory: state.settings.defaultExportDirectory,
       uiSoundsEnabled: state.settings.uiSoundsEnabled,
-      uiMotionEnabled: state.settings.uiMotionEnabled
+      uiMotionEnabled: state.settings.uiMotionEnabled,
+      snailPetEnabled: state.settings.snailPetEnabled,
+      snailPetScale: state.settings.snailPetScale,
+      snailPetSpeed: state.settings.snailPetSpeed
     });
   }, [state.settings]);
 
@@ -452,22 +483,37 @@ export function App() {
   const headerStatus = activeSession?.status ?? "idle";
   const HeaderStatusIcon = headerStatus === "active" ? PlayIcon : headerStatus === "paused" ? PauseIcon : ClockIcon;
   const headerSessionTitle = activeSession?.title ?? "No active session";
-  const previewCheckpointId = audioPreviewActive
-    ? selectedCheckpointId ?? getPreviewSegment(composition?.segments ?? [], playheadMs)?.checkpointId ?? null
+  const activePreviewSource = audioPreviewActive && previewSegment
+    ? { sourceKind: previewSegment.sourceKind, sourceId: previewSegment.sourceId }
     : null;
-  const activeCheckpointId = previewCheckpointId ?? armedCheckpointId;
+  const activeVisualSource = activePreviewSource ?? armedVisualSource;
+  const activeCheckpointId = activeVisualSource?.sourceKind === "checkpoint" ? activeVisualSource.sourceId : null;
+  const activeImportId = activeVisualSource?.sourceKind !== "checkpoint" ? activeVisualSource?.sourceId ?? null : null;
 
   useEffect(() => {
     selectedSessionIdRef.current = selectedSessionId;
   }, [selectedSessionId]);
 
   useEffect(() => {
-    armedCheckpointIdRef.current = armedCheckpointId;
-  }, [armedCheckpointId]);
+    armedVisualSourceRef.current = armedVisualSource;
+  }, [armedVisualSource]);
 
   useEffect(() => {
     selectedCheckpointIdRef.current = selectedCheckpointId;
   }, [selectedCheckpointId]);
+
+  useEffect(() => {
+    selectedImportIdRef.current = selectedImportId;
+  }, [selectedImportId]);
+
+  useEffect(() => {
+    const trackedImportId = audioPreviewActive
+      ? previewImport?.id ?? null
+      : selectedImportId;
+    setCurrentImportVideoPlaybackMs(
+      trackedImportId ? Math.max(0, importVideoPlaybackMsRef.current[trackedImportId] ?? 0) : 0
+    );
+  }, [audioPreviewActive, previewImport?.id, selectedImportId]);
 
   useEffect(() => {
     selectedSegmentIdRef.current = selectedSegmentId;
@@ -485,8 +531,9 @@ export function App() {
       return;
     }
 
-    setArmedCheckpointId(selection.armedCheckpointId);
+    setArmedVisualSource(selection.armedVisualSource);
     setSelectedCheckpointId(selection.selectedCheckpointId);
+    setSelectedImportId(selection.selectedImportId);
     setSelectedSegmentId(selection.selectedSegmentId);
   };
 
@@ -516,7 +563,13 @@ export function App() {
       previewSegmentIdRef.current = nextPreviewSegmentId;
       if (nextPreviewSegment) {
         setSelectedSegmentId(nextPreviewSegment.id);
-        setSelectedCheckpointId(nextPreviewSegment.checkpointId);
+        if (nextPreviewSegment.sourceKind === "checkpoint") {
+          setSelectedCheckpointId(nextPreviewSegment.sourceId);
+          setSelectedImportId(null);
+        } else {
+          setSelectedImportId(nextPreviewSegment.sourceId);
+          setSelectedCheckpointId(null);
+        }
       }
     };
 
@@ -540,8 +593,9 @@ export function App() {
       if (!previewSelectionRestoreRef.current) {
         previewSelectionRestoreRef.current = {
           sessionId: selectedSessionIdRef.current,
-          armedCheckpointId: armedCheckpointIdRef.current,
+          armedVisualSource: armedVisualSourceRef.current,
           selectedCheckpointId: selectedCheckpointIdRef.current,
+          selectedImportId: selectedImportIdRef.current,
           selectedSegmentId: selectedSegmentIdRef.current
         };
       }
@@ -715,15 +769,12 @@ export function App() {
 
   const buildSaveCompositionInput = (
     baseComposition: ExportCompositionSummary,
-    overrides: Partial<Pick<ExportCompositionSummary, "voiceOverAssetId" | "appendixVideoAssetId" | "outputFilePath" | "durationMs">> = {}
+    overrides: Partial<Pick<ExportCompositionSummary, "voiceOverAssetId" | "outputFilePath" | "durationMs">> = {}
   ) => ({
     sessionId: baseComposition.sessionId,
     voiceOverAssetId: Object.prototype.hasOwnProperty.call(overrides, "voiceOverAssetId")
       ? overrides.voiceOverAssetId ?? null
       : baseComposition.voiceOverAssetId,
-    appendixVideoAssetId: Object.prototype.hasOwnProperty.call(overrides, "appendixVideoAssetId")
-      ? overrides.appendixVideoAssetId ?? null
-      : baseComposition.appendixVideoAssetId,
     outputFilePath: Object.prototype.hasOwnProperty.call(overrides, "outputFilePath")
       ? overrides.outputFilePath ?? null
       : baseComposition.outputFilePath,
@@ -732,9 +783,11 @@ export function App() {
       : baseComposition.durationMs,
     segments: sortSegments(baseComposition.segments).map((segment, index) => ({
       id: segment.id,
-      checkpointId: segment.checkpointId,
+      sourceKind: segment.sourceKind,
+      sourceId: segment.sourceId,
       startOffsetMs: segment.startOffsetMs,
       endOffsetMs: segment.endOffsetMs,
+      mediaStartOffsetMs: segment.mediaStartOffsetMs,
       sortOrder: index,
       source: segment.source
     }))
@@ -750,21 +803,6 @@ export function App() {
 
     setComposition(normalizeCompositionDuration(saved, effectiveVoiceDurationMs));
     setCompositionDirty(false);
-  };
-
-  const saveAppendixAttachment = async (appendixVideoAssetId: string | null) => {
-    const sessionId = selectedSession?.id ?? selectedSessionId;
-    if (!sessionId) {
-      return;
-    }
-
-    const baseComposition = composition ?? await window.sessionTrail.export.getComposition(sessionId);
-    const saved = await window.sessionTrail.export.saveComposition(
-      buildSaveCompositionInput(baseComposition, { appendixVideoAssetId })
-    );
-    setComposition(normalizeCompositionDuration(saved, effectiveVoiceDurationMs));
-    setCompositionDirty(false);
-    await loadSessionWorkspace(sessionId);
   };
 
   const prepareVoiceOverPreview = async () => {
@@ -801,14 +839,42 @@ export function App() {
     startTransition(() => setHistoryPage(page));
   };
 
+  const getImportSourceKind = (asset: ImportedMediaAssetSummary): VisualSourceSelection["sourceKind"] =>
+    asset.kind === "image" ? "imported_image" : "imported_video";
+
+  const getMediaStartOffsetMs = (selection: VisualSourceSelection): number => {
+    if (selection.sourceKind !== "imported_video") {
+      return 0;
+    }
+
+    if (importVideoEndedRef.current[selection.sourceId]) {
+      return 0;
+    }
+
+    return Math.max(0, importVideoPlaybackMsRef.current[selection.sourceId] ?? 0);
+  };
+
+  const handleImportVideoPlaybackUpdate = (assetId: string, timeMs: number, ended: boolean) => {
+    importVideoPlaybackMsRef.current[assetId] = Math.max(0, timeMs);
+    importVideoEndedRef.current[assetId] = ended;
+    if ((audioPreviewActive ? previewImport?.id : selectedImportId) === assetId) {
+      setCurrentImportVideoPlaybackMs(Math.max(0, timeMs));
+    }
+  };
+
   const startRecording = async () => {
     if (!selectedSessionId) {
       throw new Error("Select a session before recording.");
     }
 
-    const firstCheckpoint = armedCheckpointId ?? timelineItems.find((item) => item.status === "completed")?.id;
-    if (!firstCheckpoint) {
-      throw new Error("At least one completed checkpoint is required before recording.");
+    const fallbackCheckpoint = timelineItems.find((item) => item.status === "completed");
+    const fallbackImport = importedMedia[0];
+    const firstSource =
+      armedVisualSource ??
+      (fallbackCheckpoint ? { sourceKind: "checkpoint" as const, sourceId: fallbackCheckpoint.id } : null) ??
+      (fallbackImport ? { sourceKind: getImportSourceKind(fallbackImport), sourceId: fallbackImport.id } : null);
+    if (!firstSource) {
+      throw new Error("Add at least one checkpoint or imported visual before recording.");
     }
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -822,8 +888,12 @@ export function App() {
     recordingStartedAtRef.current = Date.now();
     recordingSessionIdRef.current = selectedSessionId;
     recordingChunksRef.current = [];
-    recordingMarkersRef.current = [{ checkpointId: firstCheckpoint, offsetMs: 0 }];
-    setRecordingMarkers([{ checkpointId: firstCheckpoint, offsetMs: 0 }]);
+    recordingMarkersRef.current = [{
+      ...firstSource,
+      offsetMs: 0,
+      mediaStartOffsetMs: getMediaStartOffsetMs(firstSource)
+    }];
+    setRecordingMarkers([...recordingMarkersRef.current]);
     setRecording(true);
     recorder.ondataavailable = (event) => event.data.size > 0 && recordingChunksRef.current.push(event.data);
     recorder.onstop = () => {
@@ -867,7 +937,13 @@ export function App() {
         setComposition(normalizeCompositionDuration(saved, getEffectiveVoiceOverDurationMs(voice)));
         setCompositionDirty(false);
         setSelectedSegmentId(saved.segments[0]?.id ?? null);
-        setSelectedCheckpointId(saved.segments[0]?.checkpointId ?? null);
+        if (saved.segments[0]?.sourceKind === "checkpoint") {
+          setSelectedCheckpointId(saved.segments[0].sourceId);
+          setSelectedImportId(null);
+        } else {
+          setSelectedImportId(saved.segments[0]?.sourceId ?? null);
+          setSelectedCheckpointId(null);
+        }
       });
     };
     recorder.start();
@@ -875,19 +951,42 @@ export function App() {
 
   const stopRecording = () => recorderRef.current && recorderRef.current.state !== "inactive" && recorderRef.current.stop();
 
-  const markCheckpoint = (checkpointId: string) => {
-    setArmedCheckpointId(checkpointId);
-    setSelectedCheckpointId(checkpointId);
+  const markVisualSource = (selection: VisualSourceSelection) => {
+    if (selection.sourceKind === "imported_video" && importVideoEndedRef.current[selection.sourceId]) {
+      importVideoEndedRef.current[selection.sourceId] = false;
+      importVideoPlaybackMsRef.current[selection.sourceId] = 0;
+      setCurrentImportVideoPlaybackMs(0);
+    }
+    setArmedVisualSource(selection);
+    if (selection.sourceKind === "checkpoint") {
+      setSelectedCheckpointId(selection.sourceId);
+      setSelectedImportId(null);
+    } else {
+      setSelectedImportId(selection.sourceId);
+      setSelectedCheckpointId(null);
+    }
     if (!recording || !recordingStartedAtRef.current) {
       return;
     }
 
     const lastMarker = recordingMarkersRef.current.at(-1);
-    if (lastMarker?.checkpointId === checkpointId) {
+    const nextMediaStartOffsetMs = getMediaStartOffsetMs(selection);
+    if (
+      lastMarker?.sourceKind === selection.sourceKind &&
+      lastMarker.sourceId === selection.sourceId &&
+      lastMarker.mediaStartOffsetMs === nextMediaStartOffsetMs
+    ) {
       return;
     }
 
-    const nextMarkers = [...recordingMarkersRef.current, { checkpointId, offsetMs: Date.now() - recordingStartedAtRef.current }];
+    const nextMarkers = [
+      ...recordingMarkersRef.current,
+      {
+        ...selection,
+        offsetMs: Date.now() - recordingStartedAtRef.current,
+        mediaStartOffsetMs: nextMediaStartOffsetMs
+      }
+    ];
     recordingMarkersRef.current = nextMarkers;
     setRecordingMarkers(nextMarkers);
     setPlayheadMs(nextMarkers.at(-1)?.offsetMs ?? 0);
@@ -898,6 +997,9 @@ export function App() {
     const defaultTargetMinutes = Number(settingsDraft.defaultTargetMinutes ?? state.settings.defaultTargetMinutes);
     const captureDelaySeconds = Number(settingsDraft.captureDelaySeconds ?? state.settings.captureDelaySeconds);
     const reminderSnoozeMinutes = Number(settingsDraft.reminderSnoozeMinutes ?? state.settings.reminderSnoozeMinutes);
+    const reflectDailyGoalMinutes = Number(
+      settingsDraft.reflectDailyGoalMinutes ?? state.settings.reflectDailyGoalMinutes
+    );
     if (!Number.isFinite(reminderIntervalMinutes) || reminderIntervalMinutes < 1) {
       throw new Error("Reminder interval must be at least 1 minute.");
     }
@@ -910,6 +1012,9 @@ export function App() {
     if (!Number.isFinite(reminderSnoozeMinutes) || reminderSnoozeMinutes < 1) {
       throw new Error("Reminder snooze must be at least 1 minute.");
     }
+    if (!Number.isFinite(reflectDailyGoalMinutes) || reflectDailyGoalMinutes < 1) {
+      throw new Error("Reflect daily goal must be at least 1 minute.");
+    }
 
     await window.sessionTrail.settings.set({
       reminderIntervalMinutes,
@@ -917,6 +1022,7 @@ export function App() {
       launchAtLogin: Boolean(settingsDraft.launchAtLogin ?? state.settings.launchAtLogin),
       captureDelaySeconds,
       reminderSnoozeMinutes,
+      reflectDailyGoalMinutes,
       startupDashboardBehavior: settingsDraft.startupDashboardBehavior ?? state.settings.startupDashboardBehavior,
       openDashboardOnReminder: Boolean(
         settingsDraft.openDashboardOnReminder ?? state.settings.openDashboardOnReminder
@@ -925,7 +1031,10 @@ export function App() {
         (settingsDraft.defaultExportDirectory ?? state.settings.defaultExportDirectory).trim() ||
         state.settings.defaultExportDirectory,
       uiSoundsEnabled: Boolean(settingsDraft.uiSoundsEnabled ?? state.settings.uiSoundsEnabled),
-      uiMotionEnabled: Boolean(settingsDraft.uiMotionEnabled ?? state.settings.uiMotionEnabled)
+      uiMotionEnabled: Boolean(settingsDraft.uiMotionEnabled ?? state.settings.uiMotionEnabled),
+      snailPetEnabled: Boolean(settingsDraft.snailPetEnabled ?? state.settings.snailPetEnabled),
+      snailPetScale: settingsDraft.snailPetScale ?? state.settings.snailPetScale,
+      snailPetSpeed: settingsDraft.snailPetSpeed ?? state.settings.snailPetSpeed
     });
   };
 
@@ -974,6 +1083,17 @@ export function App() {
     }
 
     await refreshHistoryPage();
+  };
+
+  const deleteImportedMedia = async (assetId: string) => {
+    await window.sessionTrail.media.deleteImport(assetId);
+    if (selectedImportId === assetId) {
+      setSelectedImportId(null);
+      if (armedVisualSource?.sourceId === assetId) {
+        setArmedVisualSource(null);
+      }
+    }
+    await loadSessionWorkspace(selectedSession?.id ?? selectedSessionId ?? null);
   };
 
   const saveSelectedCheckpointNote = async () => {
@@ -1026,7 +1146,7 @@ export function App() {
     await window.sessionTrail.checkpoint.retake(state.pendingCheckpoint.checkpoint.id);
   };
 
-  const assignSelectedSegmentCheckpoint = (checkpointId: string) => {
+  const assignSelectedSegmentSource = (selection: VisualSourceSelection) => {
     if (!selectedSegment) {
       return;
     }
@@ -1036,13 +1156,29 @@ export function App() {
         ? {
             ...current,
             segments: current.segments.map((segment) =>
-              segment.id === selectedSegment.id ? { ...segment, checkpointId, source: "manual_edit" } : segment
+              segment.id === selectedSegment.id
+                ? {
+                    ...segment,
+                    sourceKind: selection.sourceKind,
+                    sourceId: selection.sourceId,
+                    mediaStartOffsetMs: selection.sourceKind === "imported_video"
+                      ? getMediaStartOffsetMs(selection)
+                      : 0,
+                    source: "manual_edit"
+                  }
+                : segment
             )
           }
         : current
     );
     setCompositionDirty(true);
-    setSelectedCheckpointId(checkpointId);
+    if (selection.sourceKind === "checkpoint") {
+      setSelectedCheckpointId(selection.sourceId);
+      setSelectedImportId(null);
+    } else {
+      setSelectedImportId(selection.sourceId);
+      setSelectedCheckpointId(null);
+    }
   };
 
   const handleReflectPresetChange = useCallback((nextPreset: ReflectRangePreset) => {
@@ -1065,7 +1201,7 @@ export function App() {
       ? null
       : selectedCheckpoint.status !== "completed"
         ? "Only completed checkpoints can be deleted."
-        : composition?.segments.some((segment) => segment.checkpointId === selectedCheckpoint.id)
+        : composition?.segments.some((segment) => segment.sourceKind === "checkpoint" && segment.sourceId === selectedCheckpoint.id)
           ? "This checkpoint is still used in the timeline. Reassign or remove its segment before deleting it."
           : null;
   const canDeleteSelectedCheckpoint =
@@ -1339,13 +1475,15 @@ export function App() {
           composition={composition}
           segmentStyles={segmentStyles}
           checkpointsById={checkpointsById}
+          importedMediaById={importedMediaById}
           selectedSegmentId={selectedSegmentId}
           playheadMs={playheadMs}
           effectiveVoiceDurationMs={effectiveVoiceDurationMs}
           recordingElapsedMs={recordingElapsedMs}
-          appendixVideo={appendixVideo}
+          importedMedia={importedMedia}
           timelineItems={timelineItems}
           activeCheckpointId={activeCheckpointId}
+          activeImportId={activeImportId}
           recordingMarkers={recordingMarkers}
           voiceOver={voiceOver}
           voiceOverPreviewUrl={preparedVoiceOverPreviewUrl}
@@ -1359,16 +1497,21 @@ export function App() {
           pendingCheckpoint={Boolean(state.pendingCheckpoint)}
           trackRef={trackRef}
           audioPreviewActive={audioPreviewActive}
+          armedVisualSource={armedVisualSource}
           selectedCheckpoint={selectedCheckpoint}
           selectedCheckpointThumbnailUrl={selectedCheckpointThumbnailUrl}
           selectedCheckpointPreviewUrl={selectedCheckpointPreviewUrl}
+          selectedImport={selectedImport}
+          previewSegment={previewSegment}
           previewCheckpoint={previewCheckpoint}
           previewCheckpointThumbnailUrl={previewCheckpointThumbnailUrl}
           previewCheckpointPreviewUrl={previewCheckpointPreviewUrl}
+          previewImport={previewImport}
           selectedSegment={selectedSegment}
           inspectorNoteText={inspectorNoteText}
           canDeleteSelectedCheckpoint={canDeleteSelectedCheckpoint}
           selectedCheckpointDeleteReason={selectedCheckpointDeleteReason}
+          currentImportVideoPlaybackMs={currentImportVideoPlaybackMs}
           onSelectSession={setSelectedSessionId}
           onCreateManualCheckpoint={() =>
             void runAction(async () => {
@@ -1380,9 +1523,15 @@ export function App() {
             })
           }
           onSaveTimeline={() => void runAction(() => saveComposition())}
-          onSelectSegment={(segmentId, checkpointId) => {
+          onSelectSegment={(segmentId, selection) => {
             setSelectedSegmentId(segmentId);
-            setSelectedCheckpointId(checkpointId);
+            if (selection.sourceKind === "checkpoint") {
+              setSelectedCheckpointId(selection.sourceId);
+              setSelectedImportId(null);
+            } else {
+              setSelectedImportId(selection.sourceId);
+              setSelectedCheckpointId(null);
+            }
           }}
           onResizeHandleMouseDown={(segmentId, edge, event) => {
             event.preventDefault();
@@ -1390,7 +1539,7 @@ export function App() {
             setDragState({ segmentId, edge });
           }}
           onPlayheadChange={setPlayheadMs}
-          onMarkCheckpoint={markCheckpoint}
+          onMarkVisualSource={markVisualSource}
           onToggleRecording={() =>
             void runAction(() => (recording ? Promise.resolve(stopRecording()) : startRecording()))
           }
@@ -1415,22 +1564,16 @@ export function App() {
               await prepareVoiceOverPreview();
             })
           }
-          onImportAppendix={() =>
+          onImportMedia={() =>
             void runPassiveAction(async () => {
               if (!selectedSession) {
                 return;
               }
-              const asset = await window.sessionTrail.video.importAppendix(selectedSession.id);
-              if (asset) {
-                await saveAppendixAttachment(asset.id);
-              }
+              await window.sessionTrail.media.importAssets(selectedSession.id);
+              await loadSessionWorkspace(selectedSession.id);
             })
           }
-          onRemoveAppendix={() =>
-            void runAction(async () => {
-              await saveAppendixAttachment(null);
-            })
-          }
+          onDeleteImport={(assetId) => void runAction(() => deleteImportedMedia(assetId))}
           onChooseOutputPath={() =>
             void runAction(async () => {
               if (!selectedSession) {
@@ -1457,7 +1600,8 @@ export function App() {
           onInspectorNoteChange={setInspectorNoteText}
           onSaveCheckpointNote={() => void runAction(() => saveSelectedCheckpointNote())}
           onDeleteSelectedCheckpoint={() => void runAction(() => deleteSelectedCheckpoint())}
-          onAssignSegmentCheckpoint={assignSelectedSegmentCheckpoint}
+          onAssignSegmentSource={assignSelectedSegmentSource}
+          onImportVideoPlaybackUpdate={handleImportVideoPlaybackUpdate}
         />
         </motion.div>
       ) : (
@@ -1487,7 +1631,15 @@ export function App() {
                 onStart={() => void runAction(async () => { await window.sessionTrail.session.start(sessionTitle.trim() ? { title: sessionTitle.trim() } : undefined); setSessionTitle(""); })}
                 onPause={() => void runAction(() => window.sessionTrail.session.pause(activeSession?.id))}
                 onResume={() => void runAction(async () => { await window.sessionTrail.session.resume(activeSession?.id); await window.sessionTrail.app.dismissResumeNotice(); })}
-                onComplete={() => void runAction(() => window.sessionTrail.session.complete(activeSession?.id))}
+                onComplete={() =>
+                  void runAction(async () => {
+                    const completed = await window.sessionTrail.session.complete(activeSession?.id);
+                    await refreshHistoryPage();
+                    if (selectedSessionId === completed.id) {
+                      await loadSessionWorkspace(completed.id);
+                    }
+                  })
+                }
                 onCancel={() => activeSession?.id && setCancelDialogSessionId(activeSession.id)}
                 onSelectSession={setSelectedSessionId}
                 onRenameHistorySession={(sessionId, title) =>
@@ -1510,6 +1662,8 @@ export function App() {
                 busy={busy}
                 preset={reflectPreset}
                 periodOffset={reflectPeriodOffset}
+                dailyGoalMinutes={state.settings.reflectDailyGoalMinutes}
+                dashboardFullscreen={state.dashboardFullscreen}
                 selectedSessionId={selectedReflectSessionId}
                 onPresetChange={handleReflectPresetChange}
                 onPeriodOffsetChange={setReflectPeriodOffset}

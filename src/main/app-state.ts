@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { AppSettings, AppState } from "../shared/contracts";
+import type { AppSettings, AppState, SnailPetRuntimeSummary } from "../shared/contracts";
 
 const stateEvents = new EventEmitter();
 const defaultSettings: AppSettings = {
@@ -8,12 +8,22 @@ const defaultSettings: AppSettings = {
   launchAtLogin: false,
   captureDelaySeconds: 2,
   reminderSnoozeMinutes: 1,
+  reflectDailyGoalMinutes: 480,
   startupDashboardBehavior: "tray_only",
   openDashboardOnReminder: false,
   defaultExportDirectory: "",
   uiSoundsEnabled: true,
   uiMotionEnabled: true,
+  snailPetEnabled: false,
+  snailPetScale: 3,
+  snailPetSpeed: "normal",
   theme: "clean"
+};
+
+const defaultSnailPet: SnailPetRuntimeSummary = {
+  visible: false,
+  paused: false,
+  behaviorState: null
 };
 
 let currentState: AppState = {
@@ -24,6 +34,7 @@ let currentState: AppState = {
   status: "booting",
   trayReady: false,
   dashboardVisibility: "hidden",
+  dashboardFullscreen: false,
   activeSession: null,
   recentSessions: [],
   pendingRecovery: null,
@@ -33,6 +44,7 @@ let currentState: AppState = {
   activeMediaImportJob: null,
   resumeNotice: null,
   settings: defaultSettings,
+  snailPet: defaultSnailPet,
   lastErrorMessage: null
 };
 
@@ -45,6 +57,7 @@ export function initializeAppState(version: string): AppState {
     status: "booting",
     trayReady: false,
     dashboardVisibility: "hidden",
+    dashboardFullscreen: false,
     activeSession: null,
     recentSessions: [],
     pendingRecovery: null,
@@ -54,6 +67,7 @@ export function initializeAppState(version: string): AppState {
     activeMediaImportJob: null,
     resumeNotice: null,
     settings: defaultSettings,
+    snailPet: defaultSnailPet,
     lastErrorMessage: null
   };
 

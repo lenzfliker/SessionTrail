@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { PendingCheckpoint } from "../../shared/contracts";
-import { CheckIcon, IconLabel, RotateCwIcon } from "./animated-icons";
+import { CheckIcon, IconLabel, RotateCwIcon, TrashIcon, PenIcon, HighlighterIcon, ArrowDiagonalIcon } from "./animated-icons";
 
 type AnnotationTool = "pen" | "highlighter" | "arrow";
-type AnnotationColor = "#dc2626" | "#2563eb" | "#16a34a" | "#f59e0b";
+type AnnotationColor = "#dc2626" | "#5522bb" | "#16a34a" | "#f59e0b";
 type NormalizedPoint = { x: number; y: number };
 
 type StrokeAnnotation = {
@@ -32,37 +32,40 @@ type PendingCheckpointEditorProps = {
   onSave: (editedScreenshotBuffer: Promise<ArrayBuffer | null>) => void;
 };
 
-const VIEWBOX_SIZE = 1000;
-const COLOR_OPTIONS: AnnotationColor[] = ["#dc2626", "#2563eb", "#16a34a", "#f59e0b"];
+const COLOR_OPTIONS: AnnotationColor[] = ["#dc2626", "#5522bb", "#16a34a", "#f59e0b"];
 
-function buildPath(points: NormalizedPoint[]): string {
+function buildPath(points: NormalizedPoint[], vw: number, vh: number): string {
   if (points.length === 0) {
     return "";
   }
 
   return points
     .map((point, index) => {
-      const x = Math.round(point.x * VIEWBOX_SIZE);
-      const y = Math.round(point.y * VIEWBOX_SIZE);
+      const x = Math.round(point.x * vw);
+      const y = Math.round(point.y * vh);
       return `${index === 0 ? "M" : "L"} ${x} ${y}`;
     })
     .join(" ");
 }
 
-function getArrowHeadPoints(start: NormalizedPoint, end: NormalizedPoint, size: number) {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
+function getArrowHeadPoints(
+  startPx: { x: number; y: number },
+  endPx: { x: number; y: number },
+  sizePx: number
+) {
+  const dx = endPx.x - startPx.x;
+  const dy = endPx.y - startPx.y;
   const angle = Math.atan2(dy, dx);
   const left = {
-    x: end.x - Math.cos(angle - Math.PI / 6) * size,
-    y: end.y - Math.sin(angle - Math.PI / 6) * size
+    x: endPx.x - Math.cos(angle - Math.PI / 6) * sizePx,
+    y: endPx.y - Math.sin(angle - Math.PI / 6) * sizePx
   };
   const right = {
-    x: end.x - Math.cos(angle + Math.PI / 6) * size,
-    y: end.y - Math.sin(angle + Math.PI / 6) * size
+    x: endPx.x - Math.cos(angle + Math.PI / 6) * sizePx,
+    y: endPx.y - Math.sin(angle + Math.PI / 6) * sizePx
   };
 
-  return [left, end, right];
+  return [left, endPx, right];
 }
 
 function strokeWidthFor(tool: AnnotationTool): number {
@@ -75,20 +78,26 @@ function strokeWidthFor(tool: AnnotationTool): number {
   return 7;
 }
 
-function renderSvgAnnotation(annotation: Annotation) {
+function renderSvgAnnotation(annotation: Annotation, vw: number, vh: number) {
   if (annotation.tool === "arrow") {
-    const arrowHead = getArrowHeadPoints(annotation.start, annotation.end, 0.022).map((point) => ({
-      x: Math.round(point.x * VIEWBOX_SIZE),
-      y: Math.round(point.y * VIEWBOX_SIZE)
-    }));
+    const startPx = {
+      x: Math.round(annotation.start.x * vw),
+      y: Math.round(annotation.start.y * vh)
+    };
+    const endPx = {
+      x: Math.round(annotation.end.x * vw),
+      y: Math.round(annotation.end.y * vh)
+    };
+    const sizePx = Math.round(Math.min(vw, vh) * 0.022);
+    const arrowHead = getArrowHeadPoints(startPx, endPx, sizePx);
 
     return (
       <g key={annotation.id}>
         <line
-          x1={Math.round(annotation.start.x * VIEWBOX_SIZE)}
-          y1={Math.round(annotation.start.y * VIEWBOX_SIZE)}
-          x2={Math.round(annotation.end.x * VIEWBOX_SIZE)}
-          y2={Math.round(annotation.end.y * VIEWBOX_SIZE)}
+          x1={startPx.x}
+          y1={startPx.y}
+          x2={endPx.x}
+          y2={endPx.y}
           stroke={annotation.color}
           strokeWidth={strokeWidthFor(annotation.tool)}
           strokeLinecap="round"
@@ -108,7 +117,7 @@ function renderSvgAnnotation(annotation: Annotation) {
   return (
     <path
       key={annotation.id}
-      d={buildPath(annotation.points)}
+      d={buildPath(annotation.points, vw, vh)}
       fill="none"
       stroke={annotation.color}
       strokeWidth={strokeWidthFor(annotation.tool)}
@@ -380,18 +389,26 @@ export function PendingCheckpointEditor({
       <div className="checkpoint-annotation">
         <div className="checkpoint-annotation__toolbar">
           <div className="checkpoint-annotation__tools">
-            {(["pen", "highlighter", "arrow"] as const).map((nextTool) => (
+            {(
+              [
+                { id: "pen",         label: "Pen",         Icon: PenIcon },
+                { id: "highlighter", label: "Highlighter",  Icon: HighlighterIcon },
+                { id: "arrow",       label: "Arrow",        Icon: ArrowDiagonalIcon },
+              ] as const
+            ).map(({ id, label, Icon }) => (
               <button
-                key={nextTool}
+                key={id}
                 type="button"
-                className={tool === nextTool ? "button checkpoint-tool checkpoint-tool--active" : "button button--ghost checkpoint-tool"}
+                className={tool === id ? "button button--ghost checkpoint-tool checkpoint-tool--active" : "button button--ghost checkpoint-tool"}
                 disabled={busy}
-                onClick={() => setTool(nextTool)}
+                onClick={() => setTool(id)}
+                aria-pressed={tool === id}
               >
-                {nextTool}
+                <IconLabel icon={Icon} label={label} active={tool === id} />
               </button>
             ))}
           </div>
+          <div className="checkpoint-annotation__toolbar-divider" aria-hidden="true" />
           <div className="checkpoint-annotation__colors">
             {COLOR_OPTIONS.map((option) => (
               <button
@@ -408,7 +425,7 @@ export function PendingCheckpointEditor({
           <div className="checkpoint-annotation__actions">
             <button
               type="button"
-              className="button button--ghost"
+              className="button button--ghost checkpoint-tool"
               disabled={busy || annotations.length === 0}
               onClick={() => {
                 setDraftAnnotation(null);
@@ -419,22 +436,22 @@ export function PendingCheckpointEditor({
             </button>
             <button
               type="button"
-              className="button button--ghost"
+              className="button button--ghost checkpoint-tool"
               disabled={busy || (annotations.length === 0 && !draftAnnotation)}
               onClick={() => {
                 setDraftAnnotation(null);
                 setAnnotations([]);
               }}
             >
-              Clear
+              <IconLabel icon={TrashIcon} label="Clear" />
             </button>
             <button
               type="button"
-              className="button button--ghost"
+              className="button button--ghost checkpoint-tool"
               disabled={busy}
               onClick={onRetake}
             >
-              <IconLabel icon={RotateCwIcon} label="Retake screenshot" />
+              <IconLabel icon={RotateCwIcon} label="Retake" />
             </button>
           </div>
         </div>
@@ -462,10 +479,10 @@ export function PendingCheckpointEditor({
             />
             <svg
               className="checkpoint-annotation__overlay"
-              viewBox={`0 0 ${VIEWBOX_SIZE} ${VIEWBOX_SIZE}`}
+              viewBox={`0 0 ${imageSize.width} ${imageSize.height}`}
               preserveAspectRatio="none"
             >
-              {renderedAnnotations.map((annotation) => renderSvgAnnotation(annotation))}
+              {renderedAnnotations.map((annotation) => renderSvgAnnotation(annotation, imageSize.width, imageSize.height))}
             </svg>
           </div>
         </div>

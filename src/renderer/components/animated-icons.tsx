@@ -723,3 +723,62 @@ export function XIcon(props: AnimatedIconProps) {
     </AnimatedIconBase>
   );
 }
+
+export function PenIcon(props: AnimatedIconProps) {
+  return (
+    <AnimatedIconBase {...props}>
+      {({ animate }) => (
+        <motion.g
+          initial={false}
+          animate={animate ? { rotate: -10, x: 0.5, y: -0.5 } : { rotate: 0, x: 0, y: 0 }}
+          transition={FAST_TRANSITION}
+          style={{ originX: "50%", originY: "50%" }}
+        >
+          <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+        </motion.g>
+      )}
+    </AnimatedIconBase>
+  );
+}
+
+export function HighlighterIcon(props: AnimatedIconProps) {
+  return (
+    <AnimatedIconBase {...props}>
+      {({ animate }) => (
+        <>
+          <motion.path
+            d="m9 11-6 6v3h3l6-6"
+            initial={false}
+            animate={animate ? { y: 0.5 } : { y: 0 }}
+            transition={FAST_TRANSITION}
+          />
+          <motion.path
+            d="m22 2-3 3-8.5 8.5 3 3 8.5-8.5Z"
+            initial={false}
+            animate={animate ? { rotate: 8 } : { rotate: 0 }}
+            transition={FAST_TRANSITION}
+            style={{ originX: "62%", originY: "30%" }}
+          />
+          <path d="M6 20h4" />
+        </>
+      )}
+    </AnimatedIconBase>
+  );
+}
+
+export function ArrowDiagonalIcon(props: AnimatedIconProps) {
+  return (
+    <AnimatedIconBase {...props}>
+      {({ animate }) => (
+        <motion.g
+          initial={false}
+          animate={animate ? { x: 0.7, y: -0.7 } : { x: 0, y: 0 }}
+          transition={FAST_TRANSITION}
+        >
+          <path d="M5 19 19 5" />
+          <path d="M9 5h10v10" />
+        </motion.g>
+      )}
+    </AnimatedIconBase>
+  );
+}

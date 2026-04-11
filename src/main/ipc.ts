@@ -9,6 +9,7 @@ import type { RecoveryService } from "./recovery-service";
 import type { ReminderPromptService } from "./reminder-prompt-service";
 import type { SessionMachine } from "./session-machine";
 import type { SettingsService } from "./settings-service";
+import type { SnailPetService } from "./pet/snail-pet-service";
 import { hideDashboardWindow, showDashboardWindow, toggleDashboardWindow } from "./window-manager";
 import type { SessionCancelResult, SessionSummary } from "../shared/contracts";
 import { IPC_CHANNELS } from "../shared/ipc";
@@ -68,7 +69,8 @@ export function registerIpcHandlers(
   mediaService: MediaService,
   exportService: ExportService,
   settingsService: SettingsService,
-  reflectService: ReflectService
+  reflectService: ReflectService,
+  snailPetService: SnailPetService
 ): void {
   registerHandler(IPC_CHANNELS.getAppState, () => getAppState());
   registerHandler(IPC_CHANNELS.showDashboard, () => showDashboardWindow());
@@ -77,9 +79,10 @@ export function registerIpcHandlers(
   registerHandler(IPC_CHANNELS.clearLastError, () => clearLastError());
   registerHandler(IPC_CHANNELS.dismissResumeNotice, () => dismissResumeNotice());
   registerHandler(IPC_CHANNELS.settingsGet, () => settingsService.getSettings());
-  registerHandler(IPC_CHANNELS.settingsSet, (_event, input) => {
+  registerHandler(IPC_CHANNELS.settingsSet, async (_event, input) => {
     const settings = settingsService.setSettings(input as Parameters<typeof settingsService.setSettings>[0]);
     patchAppState({ settings });
+    await snailPetService.applySettings(settings);
     return settings;
   });
   registerHandler(IPC_CHANNELS.quit, async () => {
@@ -172,14 +175,17 @@ export function registerIpcHandlers(
   registerHandler(IPC_CHANNELS.audioGetPreparedPreview, (_event, audioAssetId: string) =>
     mediaService.getPreparedPreview(audioAssetId)
   );
-  registerHandler(IPC_CHANNELS.videoImportAppendix, (_event, sessionId: string) =>
-    mediaService.importAppendix(sessionId)
+  registerHandler(IPC_CHANNELS.mediaImportAssets, (_event, sessionId: string) =>
+    mediaService.importAssets(sessionId)
   );
-  registerHandler(IPC_CHANNELS.videoGetById, (_event, videoAssetId: string) =>
-    mediaService.getVideoAssetById(videoAssetId)
+  registerHandler(IPC_CHANNELS.mediaListImports, (_event, sessionId: string) =>
+    mediaService.listImports(sessionId)
   );
-  registerHandler(IPC_CHANNELS.videoGetLatestAppendix, (_event, sessionId: string) =>
-    mediaService.getLatestAppendix(sessionId)
+  registerHandler(IPC_CHANNELS.mediaGetImportById, (_event, assetId: string) =>
+    mediaService.getImportById(assetId)
+  );
+  registerHandler(IPC_CHANNELS.mediaDeleteImport, (_event, assetId: string) =>
+    mediaService.deleteImport(assetId)
   );
   registerHandler(IPC_CHANNELS.exportRun, (_event, input) => exportService.run(input));
   registerHandler(IPC_CHANNELS.exportCancel, () => exportService.cancel());

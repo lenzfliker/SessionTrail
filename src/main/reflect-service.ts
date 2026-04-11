@@ -57,6 +57,7 @@ type ReminderPromptRow = {
   session_id: string;
   worked_offset_seconds: number;
   status: ReminderPromptEntity["status"];
+  snooze_count: number;
   snoozed_until: string | null;
   created_at: string;
   updated_at: string;
@@ -116,6 +117,7 @@ function mapReminderPromptRow(row: ReminderPromptRow): ReminderPromptEntity {
     sessionId: row.session_id,
     workedOffsetSeconds: row.worked_offset_seconds,
     status: row.status,
+    snoozeCount: row.snooze_count,
     snoozedUntil: row.snoozed_until,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -181,8 +183,7 @@ function buildReportCsv(summary: ReflectSummary): string {
   pushRow("Pause Count", summary.fragmentation.totalPauseCount);
   pushRow("Pauses Per Worked Hour", summary.fragmentation.pausesPerWorkedHour);
   pushRow("Median Pause", formatDuration(summary.fragmentation.medianPauseSeconds));
-  pushRow("Longest Active Block", formatDuration(summary.fragmentation.longestActiveBlockSeconds));
-  pushRow("Average Active Block", formatDuration(summary.fragmentation.averageActiveBlockSeconds));
+  pushRow("Average Work Stretch", formatDuration(summary.fragmentation.averageActiveBlockSeconds));
   pushRow("Reminder Prompts", summary.checkpoints.reminderTriggeredCount);
   pushRow("Reminder Captured", summary.checkpoints.reminderCapturedCount);
   pushRow("Manual Checkpoints", summary.checkpoints.manualCheckpointCount);
@@ -206,8 +207,7 @@ function buildReportCsv(summary: ReflectSummary): string {
     "Worked",
     "Paused",
     "Pause Count",
-    "Longest Active Block",
-    "Average Active Block",
+    "Average Work Stretch",
     "Reminder Prompts",
     "Manual Checkpoints",
     "Completed Checkpoints",
@@ -223,7 +223,6 @@ function buildReportCsv(summary: ReflectSummary): string {
       formatDuration(session.workedSeconds),
       formatDuration(session.pausedSeconds),
       session.pauseCount,
-      formatDuration(session.longestActiveBlockSeconds),
       formatDuration(session.averageActiveBlockSeconds),
       session.reminderTriggeredCount,
       session.manualCheckpointCount,
@@ -324,6 +323,7 @@ export class ReflectService {
                 session_id,
                 worked_offset_seconds,
                 status,
+                snooze_count,
                 snoozed_until,
                 created_at,
                 updated_at,

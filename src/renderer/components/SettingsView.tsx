@@ -55,6 +55,10 @@ export function SettingsView({
           <input type="number" min="1" max="30" value={String(draft.reminderSnoozeMinutes ?? settings.reminderSnoozeMinutes)} onChange={(event) => onChange({ reminderSnoozeMinutes: Number(event.target.value) })} />
         </motion.label>
         <motion.label className="field" variants={STAGGER_ITEM_VARIANTS}>
+          <span>Reflect daily goal minutes</span>
+          <input type="number" min="1" max="1440" value={String(draft.reflectDailyGoalMinutes ?? settings.reflectDailyGoalMinutes)} onChange={(event) => onChange({ reflectDailyGoalMinutes: Number(event.target.value) })} />
+        </motion.label>
+        <motion.label className="field" variants={STAGGER_ITEM_VARIANTS}>
           <span>Default export directory</span>
           <input value={draft.defaultExportDirectory ?? settings.defaultExportDirectory} onChange={(event) => onChange({ defaultExportDirectory: event.target.value })} />
         </motion.label>
@@ -81,6 +85,51 @@ export function SettingsView({
           <span>UI motion</span>
           <input type="checkbox" checked={Boolean(draft.uiMotionEnabled ?? settings.uiMotionEnabled)} onChange={(event) => onChange({ uiMotionEnabled: event.target.checked })} />
         </motion.label>
+      </motion.div>
+      <motion.div
+        className="settings-section"
+        initial={motionEnabled ? "hidden" : false}
+        animate="visible"
+        variants={STAGGER_VARIANTS}
+      >
+        <div className="panel__header">
+          <h3>Snail Pet</h3>
+          <span className="badge">
+            {Boolean(draft.snailPetEnabled ?? settings.snailPetEnabled) ? "enabled" : "disabled"}
+          </span>
+        </div>
+        <motion.div className="settings-section__body form-grid" variants={STAGGER_VARIANTS}>
+          <motion.label className="field checkbox-field" variants={STAGGER_ITEM_VARIANTS}>
+            <span>Enable desktop snail</span>
+            <input type="checkbox" checked={Boolean(draft.snailPetEnabled ?? settings.snailPetEnabled)} onChange={(event) => onChange({ snailPetEnabled: event.target.checked })} />
+          </motion.label>
+          <motion.label className="field" variants={STAGGER_ITEM_VARIANTS}>
+            <span>Size</span>
+            <select
+              disabled={!Boolean(draft.snailPetEnabled ?? settings.snailPetEnabled)}
+              value={String(draft.snailPetScale ?? settings.snailPetScale)}
+              onChange={(event) => onChange({ snailPetScale: Number(event.target.value) as AppSettings["snailPetScale"] })}
+            >
+              <option value="2">2x</option>
+              <option value="3">3x</option>
+              <option value="4">4x</option>
+            </select>
+          </motion.label>
+          <motion.label className="field" variants={STAGGER_ITEM_VARIANTS}>
+            <span>Speed</span>
+            <select
+              disabled={!Boolean(draft.snailPetEnabled ?? settings.snailPetEnabled)}
+              value={draft.snailPetSpeed ?? settings.snailPetSpeed}
+              onChange={(event) => onChange({ snailPetSpeed: event.target.value as AppSettings["snailPetSpeed"] })}
+            >
+              <option value="snail_pace">Snail Pace</option>
+              <option value="low">Slow</option>
+              <option value="normal">Normal</option>
+              <option value="fast">Fast</option>
+              <option value="hyper">Hyper</option>
+            </select>
+          </motion.label>
+        </motion.div>
       </motion.div>
       <motion.div
         className="button-row"

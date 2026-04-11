@@ -9,11 +9,15 @@ const DEFAULT_SETTINGS: AppSettings = {
   launchAtLogin: false,
   captureDelaySeconds: 2,
   reminderSnoozeMinutes: 1,
+  reflectDailyGoalMinutes: 480,
   startupDashboardBehavior: "tray_only",
   openDashboardOnReminder: false,
   defaultExportDirectory: app.getPath("downloads"),
   uiSoundsEnabled: true,
   uiMotionEnabled: true,
+  snailPetEnabled: false,
+  snailPetScale: 3,
+  snailPetSpeed: "normal",
   theme: "clean"
 };
 
@@ -33,6 +37,10 @@ function clampReminderSnoozeMinutes(value: number): number {
   return Math.max(1, Math.min(30, Math.round(value)));
 }
 
+function clampReflectDailyGoalMinutes(value: number): number {
+  return Math.max(1, Math.min(24 * 60, Math.round(value)));
+}
+
 function normalizeStartupDashboardBehavior(value: unknown): AppSettings["startupDashboardBehavior"] {
   return value === "show_dashboard" ? "show_dashboard" : "tray_only";
 }
@@ -40,6 +48,22 @@ function normalizeStartupDashboardBehavior(value: unknown): AppSettings["startup
 function normalizeDirectory(value: unknown): string {
   const trimmed = typeof value === "string" ? value.trim() : "";
   return trimmed || app.getPath("downloads");
+}
+
+function normalizeSnailPetScale(value: unknown): AppSettings["snailPetScale"] {
+  return value === 2 || value === 4 ? value : 3;
+}
+
+function normalizeSnailPetSpeed(value: unknown): AppSettings["snailPetSpeed"] {
+  if (value === "snail_pace" || value === "low" || value === "fast" || value === "hyper") {
+    return value;
+  }
+
+  if (value === "slow") {
+    return "low";
+  }
+
+  return "normal";
 }
 
 export class SettingsService {
@@ -66,6 +90,9 @@ export class SettingsService {
       reminderSnoozeMinutes: clampReminderSnoozeMinutes(
         stored.reminderSnoozeMinutes ?? DEFAULT_SETTINGS.reminderSnoozeMinutes
       ),
+      reflectDailyGoalMinutes: clampReflectDailyGoalMinutes(
+        stored.reflectDailyGoalMinutes ?? DEFAULT_SETTINGS.reflectDailyGoalMinutes
+      ),
       startupDashboardBehavior: normalizeStartupDashboardBehavior(
         stored.startupDashboardBehavior ?? DEFAULT_SETTINGS.startupDashboardBehavior
       ),
@@ -77,6 +104,9 @@ export class SettingsService {
       ),
       uiSoundsEnabled: Boolean(stored.uiSoundsEnabled ?? DEFAULT_SETTINGS.uiSoundsEnabled),
       uiMotionEnabled: Boolean(stored.uiMotionEnabled ?? DEFAULT_SETTINGS.uiMotionEnabled),
+      snailPetEnabled: Boolean(stored.snailPetEnabled ?? DEFAULT_SETTINGS.snailPetEnabled),
+      snailPetScale: normalizeSnailPetScale(stored.snailPetScale ?? DEFAULT_SETTINGS.snailPetScale),
+      snailPetSpeed: normalizeSnailPetSpeed(stored.snailPetSpeed ?? DEFAULT_SETTINGS.snailPetSpeed),
       theme: "clean"
     };
   }
@@ -104,6 +134,10 @@ export class SettingsService {
         input.reminderSnoozeMinutes !== undefined
           ? clampReminderSnoozeMinutes(input.reminderSnoozeMinutes)
           : current.reminderSnoozeMinutes,
+      reflectDailyGoalMinutes:
+        input.reflectDailyGoalMinutes !== undefined
+          ? clampReflectDailyGoalMinutes(input.reflectDailyGoalMinutes)
+          : current.reflectDailyGoalMinutes,
       startupDashboardBehavior:
         input.startupDashboardBehavior !== undefined
           ? normalizeStartupDashboardBehavior(input.startupDashboardBehavior)
@@ -120,6 +154,16 @@ export class SettingsService {
         input.uiSoundsEnabled !== undefined ? Boolean(input.uiSoundsEnabled) : current.uiSoundsEnabled,
       uiMotionEnabled:
         input.uiMotionEnabled !== undefined ? Boolean(input.uiMotionEnabled) : current.uiMotionEnabled,
+      snailPetEnabled:
+        input.snailPetEnabled !== undefined ? Boolean(input.snailPetEnabled) : current.snailPetEnabled,
+      snailPetScale:
+        input.snailPetScale !== undefined
+          ? normalizeSnailPetScale(input.snailPetScale)
+          : current.snailPetScale,
+      snailPetSpeed:
+        input.snailPetSpeed !== undefined
+          ? normalizeSnailPetSpeed(input.snailPetSpeed)
+          : current.snailPetSpeed,
       theme: "clean"
     };
 

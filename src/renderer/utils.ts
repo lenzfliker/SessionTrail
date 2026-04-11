@@ -2,11 +2,20 @@ import type {
   AudioAssetSummary,
   ExportCompositionSummary,
   ExportTimelineSegmentSummary,
+  VisualSourceKind,
   SaveExportCompositionInput,
   SessionSummary
 } from "../shared/contracts";
 
-export type RecordingMarker = { checkpointId: string; offsetMs: number };
+export type VisualSourceSelection = {
+  sourceKind: VisualSourceKind;
+  sourceId: string;
+};
+
+export type RecordingMarker = VisualSourceSelection & {
+  offsetMs: number;
+  mediaStartOffsetMs: number;
+};
 
 export const MIN_SEGMENT_DURATION_MS = 500;
 
@@ -47,12 +56,14 @@ export function buildSegmentsFromMarkers(
     .filter((marker, index, list) => index === 0 || marker.offsetMs > list[index - 1].offsetMs);
 
   return sorted.map((marker, index) => ({
-    checkpointId: marker.checkpointId,
+    sourceKind: marker.sourceKind,
+    sourceId: marker.sourceId,
     startOffsetMs: index === 0 ? 0 : marker.offsetMs,
     endOffsetMs:
       index === sorted.length - 1
         ? Math.max(durationMs, marker.offsetMs + MIN_SEGMENT_DURATION_MS)
         : Math.max(sorted[index + 1].offsetMs, marker.offsetMs + MIN_SEGMENT_DURATION_MS),
+    mediaStartOffsetMs: marker.mediaStartOffsetMs,
     sortOrder: index,
     source: "live_marker" as const
   }));
@@ -152,7 +163,6 @@ export function getFileName(filePath: string): string {
   return filePath.split(/[/\\]/).at(-1) ?? filePath;
 }
 
-export function toFileUrl(filePath: string): string {
-  const normalized = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
-  return encodeURI(`file:///${normalized}`);
+export function toRendererAssetUrl(filePath: string): string {
+  return `/__sessiontrail_asset?path=${encodeURIComponent(filePath)}`;
 }

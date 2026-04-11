@@ -11,6 +11,10 @@ type TrayManagerOptions = {
   onTakeScreenshot: () => void | Promise<void>;
   onCompleteSession: () => void | Promise<void>;
   onCancelSession: () => void | Promise<void>;
+  onShowSnail: () => void | Promise<void>;
+  onHideSnail: () => void | Promise<void>;
+  onPauseSnail: () => void | Promise<void>;
+  onResumeSnail: () => void | Promise<void>;
   onQuit: () => void | Promise<void>;
 };
 
@@ -38,6 +42,9 @@ function buildContextMenu(options: TrayManagerOptions): Electron.Menu {
   const pendingReminderPrompt = state.pendingReminderPrompt;
   const pendingCheckpoint = state.pendingCheckpoint;
   const sessionStatusLabel = activeSession ? activeSession.status : "idle";
+  const snailPetEnabled = state.settings.snailPetEnabled;
+  const snailPetVisible = state.snailPet.visible;
+  const snailPetPaused = state.snailPet.paused;
 
   return Menu.buildFromTemplate([
     {
@@ -129,6 +136,39 @@ function buildContextMenu(options: TrayManagerOptions): Electron.Menu {
       click: () => {
         void options.onShowDashboard();
       }
+    },
+    {
+      label: "Snail Pet",
+      submenu: [
+        {
+          label: "Show Snail",
+          enabled: snailPetEnabled && !snailPetVisible,
+          click: () => {
+            void options.onShowSnail();
+          }
+        },
+        {
+          label: "Hide Snail",
+          enabled: snailPetEnabled && snailPetVisible,
+          click: () => {
+            void options.onHideSnail();
+          }
+        },
+        {
+          label: "Pause Snail",
+          enabled: snailPetEnabled && snailPetVisible && !snailPetPaused,
+          click: () => {
+            void options.onPauseSnail();
+          }
+        },
+        {
+          label: "Resume Snail",
+          enabled: snailPetEnabled && snailPetVisible && snailPetPaused,
+          click: () => {
+            void options.onResumeSnail();
+          }
+        }
+      ]
     },
     {
       type: "separator"

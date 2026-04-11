@@ -162,6 +162,7 @@ export class ReminderPromptService {
       sessionId: session.id,
       workedOffsetSeconds,
       status: "pending" as const,
+      snoozeCount: 0,
       snoozedUntil: null,
       createdAt,
       updatedAt: createdAt,
@@ -220,6 +221,7 @@ export class ReminderPromptService {
   public snooze(reminderPromptId: string): ReminderPromptSummary {
     const prompt = this.requirePrompt(reminderPromptId);
     prompt.status = "snoozed";
+    prompt.snoozeCount += 1;
     prompt.snoozedUntil = new Date(
       Date.now() + this.settingsService.getSettings().reminderSnoozeMinutes * 60_000
     ).toISOString();

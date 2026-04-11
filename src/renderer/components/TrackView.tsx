@@ -283,15 +283,14 @@ export function TrackView({
                 <>
                   <motion.button
                     type="button"
-                    className={selectedSessionId === session.id ? "list-row list-row--active" : "list-row"}
+                    className="list-row"
                     onClick={() => onSelectSession(session.id)}
-                    whileTap={motionEnabled ? { scale: 0.99 } : undefined}
                   >
                     <span className="list-row__lead">
                       <span className="list-row__glyph">
                         {(() => {
                           const StatusIcon = getSessionStatusIcon(session.status);
-                          return <IconGlyph icon={StatusIcon} size={18} active={selectedSessionId === session.id || session.status === "active"} />;
+                          return <IconGlyph icon={StatusIcon} size={18} active={session.status === "active"} />;
                         })()}
                       </span>
                       <span className="list-row__copy">
@@ -302,7 +301,6 @@ export function TrackView({
                     <span className={`list-row__status list-row__status--${session.status}`}>{session.status}</span>
                     <span className="list-row__trail">
                       <span>{formatDuration(session.workedSeconds)}</span>
-                      <IconGlyph icon={ChevronRightIcon} size={16} />
                     </span>
                   </motion.button>
                   <div className="list-row__actions">

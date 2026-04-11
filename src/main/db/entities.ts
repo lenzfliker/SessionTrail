@@ -1,4 +1,4 @@
-import type { ScreenshotMode, SessionStatus, WorkSegmentType } from "../../shared/contracts";
+import type { ImportedMediaKind, ScreenshotMode, SessionStatus, VisualSourceKind, WorkSegmentType } from "../../shared/contracts";
 
 export type SessionEntity = {
   id: string;
@@ -90,6 +90,15 @@ export type VideoAssetEntity = {
   createdAt: string;
 };
 
+export type ImportedMediaAssetEntity = {
+  id: string;
+  sessionId: string;
+  kind: ImportedMediaKind;
+  filePath: string;
+  durationMs: number | null;
+  createdAt: string;
+};
+
 export type RuntimeStateEntity = {
   key: string;
   value: string;
@@ -101,6 +110,7 @@ export type ReminderPromptEntity = {
   sessionId: string;
   workedOffsetSeconds: number;
   status: "pending" | "snoozed" | "skipped" | "captured";
+  snoozeCount: number;
   snoozedUntil: string | null;
   createdAt: string;
   updatedAt: string;
@@ -120,9 +130,11 @@ export type ExportCompositionEntity = {
 export type ExportTimelineSegmentEntity = {
   id: string;
   sessionId: string;
-  checkpointId: string;
+  sourceKind: VisualSourceKind;
+  sourceId: string;
   startOffsetMs: number;
   endOffsetMs: number;
+  mediaStartOffsetMs: number;
   sortOrder: number;
   source: "live_marker" | "manual_edit" | "seeded";
   createdAt: string;

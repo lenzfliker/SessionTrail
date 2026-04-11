@@ -33,6 +33,7 @@ async function main() {
   const { ExportService } = require("../dist/main/export-service.js");
   const { RuntimeStateStore, RUNTIME_STATE_KEYS } = require("../dist/main/runtime-state-store.js");
   const { CheckpointRepository } = require("../dist/main/db/repos/checkpoint-repository.js");
+  const { ReminderPromptRepository } = require("../dist/main/db/repos/reminder-prompt-repository.js");
   const { ScreenshotAssetRepository } = require("../dist/main/db/repos/screenshot-asset-repository.js");
   const { SessionRepository } = require("../dist/main/db/repos/session-repository.js");
 
@@ -55,6 +56,7 @@ async function main() {
   const reminderScheduler = new ReminderScheduler(sessionMachine, reminderPromptService);
   const runtimeStateStore = new RuntimeStateStore(db);
   const checkpointRepository = new CheckpointRepository(db);
+  const reminderPromptRepository = new ReminderPromptRepository(db);
   const screenshotAssetRepository = new ScreenshotAssetRepository(db);
   const sessionRepository = new SessionRepository(db);
 
@@ -140,6 +142,27 @@ async function main() {
   const resumedPrompt = reminderPromptService.getPendingPrompt();
   assert.ok(resumedPrompt, "Reminder prompt should fire once actual worked time reaches the threshold.");
   assert.equal(resumedPrompt.sessionId, reminderSession.id);
+
+  reminderPromptService.snooze(resumedPrompt.id);
+  let persistedPrompt = reminderPromptRepository.findById(resumedPrompt.id);
+  assert.ok(persistedPrompt, "Snoozed prompt should persist.");
+  assert.equal(persistedPrompt?.snoozeCount, 1, "First snooze should increment snooze history.");
+
+  reminderPromptRepository.update({
+    ...persistedPrompt,
+    status: "snoozed",
+    snoozedUntil: nowIso(-1000),
+    updatedAt: nowIso()
+  });
+  const resumedSnoozedPrompt = reminderPromptService.syncForSession(sessionMachine.getById(reminderSession.id));
+  assert.ok(resumedSnoozedPrompt, "Expired snoozed prompt should reopen as pending.");
+  persistedPrompt = reminderPromptRepository.findById(resumedPrompt.id);
+  assert.equal(persistedPrompt?.status, "pending", "Expired snoozed prompt should return to pending.");
+  assert.equal(persistedPrompt?.snoozeCount, 1, "Reopening a snoozed prompt should preserve snooze history.");
+
+  reminderPromptService.snooze(resumedPrompt.id);
+  persistedPrompt = reminderPromptRepository.findById(resumedPrompt.id);
+  assert.equal(persistedPrompt?.snoozeCount, 2, "Repeated snoozes should keep accumulating.");
 
   sessionMachine.complete(reminderSession.id);
 
