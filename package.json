@@ -1,9 +1,12 @@
 {
   "name": "sessiontrail",
   "productName": "SessionTrail",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "author": "SessionTrail",
+  "contributors": [
+    "https://github.com/codex"
+  ],
   "description": "Windows-first tray app for tracking focused work sessions.",
   "main": "dist/main/main.js",
   "scripts": {
@@ -20,6 +23,7 @@
     "smoke:session-machine": "node scripts/launch-electron.cjs scripts/session-machine-smoke.cjs",
     "smoke:reflect-analytics": "node scripts/reflect-analytics-smoke.cjs",
     "smoke:vnext-regression": "node scripts/launch-electron.cjs scripts/vnext-regression-smoke.cjs",
+    "test:snail-pet": "npm run build:main && node --test scripts/snail-pet-geometry.test.cjs scripts/snail-pet-inset-profile.test.cjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "rebuild-native": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "npm run rebuild-native"

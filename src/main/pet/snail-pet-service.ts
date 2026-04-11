@@ -7,23 +7,43 @@ import type {
   SnailPetRuntimeSummary,
   SnailPetSpeed
 } from "../../shared/contracts";
+import {
+  type PetEdge,
+  type RectLike,
+  type TravelDirection,
+  getDefaultTrackOffset,
+  getHostPaddingPx,
+  getHostWindowSize,
+  getPerimeterLength,
+  getSpriteSizePx,
+  getTrackOffsetFromLegacyPosition,
+  getVisualAnchor,
+  getVisualTransform,
+  getWindowOriginForContactPoint,
+  normalizeTrackOffset,
+  resolveTrackPosition,
+  resolveTrackPositionForDirection
+} from "../../shared/snail-pet-geometry";
 import { patchAppState } from "../app-state";
 import { logError } from "../logger";
 import { startRendererServer } from "../renderer-server";
 
-type PetEdge = "top" | "right" | "bottom" | "left";
-type TravelDirection = -1 | 1;
-type PetCorner = "top_left" | "top_right" | "bottom_right" | "bottom_left";
-
 type PersistedPetState = {
   visible: boolean;
   paused: boolean;
-  edge: PetEdge;
   direction: TravelDirection;
-  x: number;
-  y: number;
-  flipX?: boolean;
+  trackOffsetPx: number;
   state: SnailPetBehaviorState;
+};
+
+type LegacyPersistedPetState = {
+  visible?: boolean;
+  paused?: boolean;
+  edge?: PetEdge;
+  direction?: TravelDirection;
+  x?: number;
+  y?: number;
+  state?: SnailPetBehaviorState;
 };
 
 type WeightedState = {
@@ -31,31 +51,11 @@ type WeightedState = {
   weight: number;
 };
 
-type PerimeterBounds = {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-};
-
-type Position = {
-  x: number;
-  y: number;
-};
-
-type EdgeTransition = {
-  fromEdge: PetEdge;
-  toEdge: PetEdge;
-  phase: "exit" | "entry";
-  corner: PetCorner;
-  entryDirection: TravelDirection;
-  targetX: number;
-  targetY: number;
-};
-
 type RuntimeConfig = {
   renderScale: AppSettings["snailPetScale"];
   windowSize: number;
+  spriteSizePx: number;
+  hostPaddingPx: number;
   moveSpeedPerTick: number;
   frameDurationMs: number;
   cornerContinueChance: number;
@@ -66,11 +66,24 @@ type RuntimeConfig = {
   transitionWeights: readonly WeightedState[];
 };
 
-const PET_WINDOW_FRAME_SIZE = 32;
+type TrackPlacement = {
+  edge: PetEdge;
+  contactX: number;
+  contactY: number;
+  windowX: number;
+  windowY: number;
+  windowSize: number;
+  spriteSizePx: number;
+  hostPaddingPx: number;
+};
+
 const TICK_INTERVAL_MS = 50;
 const MAX_TICK_DELTA_MS = 250;
 const PREFS_FILE_NAME = "snail-pet.json";
 const PET_VISUAL_STATE_CHANNEL = "snail-pet:visual-state";
+const CORNER_CONTINUE_BEFORE_FULL_CIRCUIT = 0.92;
+const POSITION_PERSIST_INTERVAL_MS = 1_000;
+const PET_ALWAYS_ON_TOP_LEVEL: Parameters<BrowserWindow["setAlwaysOnTop"]>[1] = "screen-saver";
 
 const EDGE_BIT: Record<PetEdge, number> = { bottom: 1, left: 2, top: 4, right: 8 };
 const ALL_EDGES_VISITED = 0xf;
@@ -111,7 +124,7 @@ const DEFAULT_TRANSITION_WEIGHTS: readonly WeightedState[] = [
 ];
 
 function clampDirection(value: unknown): TravelDirection {
-  return value === 1 ? 1 : -1;
+  return value === -1 ? -1 : 1;
 }
 
 function clampEdge(value: unknown): PetEdge {
@@ -120,10 +133,6 @@ function clampEdge(value: unknown): PetEdge {
 
 function clampBehaviorState(value: unknown): SnailPetBehaviorState {
   return value === "move" || value === "work" ? value : "idle";
-}
-
-function clampNumber(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(value, max));
 }
 
 function randomBetween(min: number, max: number): number {
@@ -145,202 +154,45 @@ function pickWeightedState(entries: readonly WeightedState[]): SnailPetBehaviorS
   return entries.at(-1)?.state ?? "idle";
 }
 
-function getScaleWindowSize(scale: AppSettings["snailPetScale"]): number {
-  return PET_WINDOW_FRAME_SIZE * scale;
-}
-
 function getEntryUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/$/, "")}/pet.html`;
 }
 
-function getVisualTransform(edge: PetEdge, direction: TravelDirection): {
-  rotationDeg: number;
-  flipX: boolean;
-} {
-  if (edge === "bottom") {
-    return {
-      rotationDeg: 0,
-      flipX: direction < 0
-    };
-  }
-
-  if (edge === "top") {
-    return {
-      rotationDeg: 180,
-      flipX: direction > 0
-    };
-  }
-
-  if (edge === "left") {
-    return {
-      rotationDeg: 90,
-      flipX: direction < 0
-    };
-  }
-
+function roundRect(rect: RectLike): Rectangle {
   return {
-    rotationDeg: -90,
-    flipX: direction > 0
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height)
   };
 }
-
-function getCornerForEdge(edge: PetEdge, direction: TravelDirection): PetCorner {
-  switch (edge) {
-    case "top":
-      return direction > 0 ? "top_right" : "top_left";
-    case "right":
-      return direction > 0 ? "bottom_right" : "top_right";
-    case "bottom":
-      return direction > 0 ? "bottom_right" : "bottom_left";
-    case "left":
-    default:
-      return direction > 0 ? "bottom_left" : "top_left";
-  }
-}
-
-function getAdjacentEdge(edge: PetEdge, direction: TravelDirection): {
-  toEdge: PetEdge;
-  entryDirection: TravelDirection;
-} {
-  switch (`${edge}:${direction}` as const) {
-    case "top:1":
-      return { toEdge: "right", entryDirection: 1 };
-    case "top:-1":
-      return { toEdge: "left", entryDirection: 1 };
-    case "right:1":
-      return { toEdge: "bottom", entryDirection: -1 };
-    case "right:-1":
-      return { toEdge: "top", entryDirection: -1 };
-    case "bottom:1":
-      return { toEdge: "right", entryDirection: -1 };
-    case "bottom:-1":
-      return { toEdge: "left", entryDirection: -1 };
-    case "left:1":
-      return { toEdge: "bottom", entryDirection: 1 };
-    case "left:-1":
-    default:
-      return { toEdge: "top", entryDirection: 1 };
-  }
-}
-
-function getPerimeterBounds(workArea: Rectangle, windowBounds: Rectangle): PerimeterBounds {
-  const w = Math.round(windowBounds.width);
-  const h = Math.round(windowBounds.height);
-  return {
-    left: workArea.x,
-    top: workArea.y,
-    right: workArea.x + workArea.width - w,
-    bottom: workArea.y + workArea.height - h
-  };
-}
-
-function getOffscreenExitTarget(
-  edge: PetEdge,
-  direction: TravelDirection,
-  perimeter: PerimeterBounds,
-  windowBounds: Rectangle
-): Position {
-  if (edge === "top") {
-    return {
-      x: direction > 0 ? perimeter.right + windowBounds.width : perimeter.left - windowBounds.width,
-      y: perimeter.top
-    };
-  }
-
-  if (edge === "bottom") {
-    return {
-      x: direction > 0 ? perimeter.right + windowBounds.width : perimeter.left - windowBounds.width,
-      y: perimeter.bottom
-    };
-  }
-
-  if (edge === "left") {
-    return {
-      x: perimeter.left,
-      y: direction > 0 ? perimeter.bottom + windowBounds.height : perimeter.top - windowBounds.height
-    };
-  }
-
-  return {
-    x: perimeter.right,
-    y: direction > 0 ? perimeter.bottom + windowBounds.height : perimeter.top - windowBounds.height
-  };
-}
-
-function getEntryStartPosition(
-  toEdge: PetEdge,
-  entryDirection: TravelDirection,
-  perimeter: PerimeterBounds,
-  windowBounds: Rectangle
-): Position {
-  if (toEdge === "top") {
-    return {
-      x: entryDirection > 0 ? perimeter.left - windowBounds.width : perimeter.right + windowBounds.width,
-      y: perimeter.top
-    };
-  }
-
-  if (toEdge === "bottom") {
-    return {
-      x: entryDirection > 0 ? perimeter.left - windowBounds.width : perimeter.right + windowBounds.width,
-      y: perimeter.bottom
-    };
-  }
-
-  if (toEdge === "left") {
-    return {
-      x: perimeter.left,
-      y: entryDirection > 0 ? perimeter.top - windowBounds.height : perimeter.bottom + windowBounds.height
-    };
-  }
-
-  return {
-    x: perimeter.right,
-    y: entryDirection > 0 ? perimeter.top - windowBounds.height : perimeter.bottom + windowBounds.height
-  };
-}
-
-function getEntryTarget(toEdge: PetEdge, entryDirection: TravelDirection, perimeter: PerimeterBounds): Position {
-  if (toEdge === "top") {
-    return {
-      x: entryDirection > 0 ? perimeter.left : perimeter.right,
-      y: perimeter.top
-    };
-  }
-
-  if (toEdge === "bottom") {
-    return {
-      x: entryDirection > 0 ? perimeter.left : perimeter.right,
-      y: perimeter.bottom
-    };
-  }
-
-  if (toEdge === "left") {
-    return {
-      x: perimeter.left,
-      y: entryDirection > 0 ? perimeter.top : perimeter.bottom
-    };
-  }
-
-  return {
-    x: perimeter.right,
-    y: entryDirection > 0 ? perimeter.top : perimeter.bottom
-  };
-}
-
 
 export class SnailPetService {
   private readonly prefsPath = join(app.getPath("userData"), PREFS_FILE_NAME);
   private readonly savedPrefs = this.loadPrefs();
   private readonly handleDisplayChange = () => {
-    if (!this.window || this.window.isDestroyed()) {
-      return;
+    const currentDisplayBounds = this.getPrimaryDisplayBounds();
+    const previousPerimeter = getPerimeterLength(this.lastDisplayBounds);
+    const currentPerimeter = getPerimeterLength(currentDisplayBounds);
+
+    if (previousPerimeter > 0 && currentPerimeter > 0) {
+      const normalizedOffset = normalizeTrackOffset(this.trackOffsetPx, previousPerimeter);
+      this.trackOffsetPx = normalizeTrackOffset(
+        (normalizedOffset / previousPerimeter) * currentPerimeter,
+        currentPerimeter
+      );
+    } else {
+      this.trackOffsetPx = getDefaultTrackOffset(currentDisplayBounds);
     }
 
-    this.transition = null;
-    this.refreshCachedPerimeter();
-    this.snapToPerimeter();
-    this.pushVisualState();
+    this.lastDisplayBounds = currentDisplayBounds;
+    this.edgeVisitMask |= EDGE_BIT[this.getCurrentMotionEdge(currentDisplayBounds)];
+
+    if (this.window && !this.window.isDestroyed()) {
+      this.syncWindowToTrackPosition(currentDisplayBounds);
+      this.pushVisualState();
+    }
+
     this.savePrefs();
   };
 
@@ -352,25 +204,22 @@ export class SnailPetService {
   private lastTickAt = 0;
   private idleStreak = 0;
   private lastRuntimeState: SnailPetRuntimeSummary | null = null;
-  private transition: EdgeTransition | null = null;
   private hasAppliedSettings = false;
-  private cachedPerimeter: PerimeterBounds | null = null;
+  private lastPrefsSavedAt = 0;
+  private lastDisplayBounds = this.getPrimaryDisplayBounds();
   private edgeVisitMask = 0;
   private behaviorState: SnailPetBehaviorState = this.savedPrefs?.state ?? "idle";
-  private edge: PetEdge = this.savedPrefs?.edge ?? "bottom";
-  private direction: TravelDirection = this.savedPrefs?.direction ?? -1;
+  private direction: TravelDirection = this.savedPrefs?.direction ?? 1;
   private visible = this.savedPrefs?.visible ?? true;
   private paused = this.savedPrefs?.paused ?? false;
-  private position: Position = {
-    x: this.savedPrefs?.x ?? 0,
-    y: this.savedPrefs?.y ?? 0
-  };
+  private trackOffsetPx = this.savedPrefs?.trackOffsetPx ?? getDefaultTrackOffset(this.lastDisplayBounds);
 
   public constructor() {
+    this.trackOffsetPx = normalizeTrackOffset(this.trackOffsetPx, getPerimeterLength(this.lastDisplayBounds));
     screen.on("display-added", this.handleDisplayChange);
     screen.on("display-removed", this.handleDisplayChange);
     screen.on("display-metrics-changed", this.handleDisplayChange);
-    this.edgeVisitMask = EDGE_BIT[this.edge];
+    this.edgeVisitMask = EDGE_BIT[this.getCurrentMotionEdge(this.lastDisplayBounds)];
     this.patchRuntimeState();
   }
 
@@ -385,7 +234,6 @@ export class SnailPetService {
       this.stopTicking();
       this.savePrefs();
       this.destroyWindow();
-      this.transition = null;
       this.patchRuntimeState();
       return;
     }
@@ -393,8 +241,11 @@ export class SnailPetService {
     if (!isFirstApply && !wasEnabled) {
       this.visible = true;
       this.paused = false;
-      this.transition = null;
     }
+
+    this.lastDisplayBounds = this.getPrimaryDisplayBounds();
+    this.trackOffsetPx = normalizeTrackOffset(this.trackOffsetPx, getPerimeterLength(this.lastDisplayBounds));
+    this.edgeVisitMask |= EDGE_BIT[this.getCurrentMotionEdge(this.lastDisplayBounds)];
 
     await this.ensureWindow();
     this.resizeWindowToScale();
@@ -462,10 +313,14 @@ export class SnailPetService {
   private getRuntimeConfig(): RuntimeConfig {
     const renderScale = this.settings?.snailPetScale ?? 3;
     const speedPreset = SPEED_PRESETS[this.settings?.snailPetSpeed ?? "normal"];
+    const spriteSizePx = getSpriteSizePx(renderScale);
+    const hostPaddingPx = getHostPaddingPx(renderScale);
 
     return {
       renderScale,
-      windowSize: getScaleWindowSize(renderScale),
+      windowSize: getHostWindowSize(renderScale),
+      spriteSizePx,
+      hostPaddingPx,
       moveSpeedPerTick: speedPreset.moveSpeedPerTick,
       frameDurationMs: speedPreset.frameDurationMs,
       cornerContinueChance: 0.65,
@@ -477,20 +332,63 @@ export class SnailPetService {
     };
   }
 
+  private getPrimaryDisplayBounds(): Rectangle {
+    return roundRect(screen.getPrimaryDisplay().bounds);
+  }
+
+  private getCurrentMotionEdge(bounds = this.getPrimaryDisplayBounds()): PetEdge {
+    return resolveTrackPositionForDirection(this.trackOffsetPx, bounds, this.direction).edge;
+  }
+
+  private getTrackPlacement(bounds = this.getPrimaryDisplayBounds()): TrackPlacement {
+    const config = this.getRuntimeConfig();
+    const contactPosition = resolveTrackPosition(this.trackOffsetPx, bounds);
+    const motionPosition = resolveTrackPositionForDirection(this.trackOffsetPx, bounds, this.direction);
+    const edgeInsetPx =
+      this.settings?.snailPetInsetProfile[this.settings.snailPetScale] ??
+      this.settings?.snailPetInsetProfile[3] ??
+      15;
+    const insetContactPoint =
+      motionPosition.edge === "top"
+        ? { x: contactPosition.contactX, y: contactPosition.contactY + edgeInsetPx }
+        : motionPosition.edge === "right"
+          ? { x: contactPosition.contactX - edgeInsetPx, y: contactPosition.contactY }
+          : motionPosition.edge === "bottom"
+            ? { x: contactPosition.contactX, y: contactPosition.contactY - edgeInsetPx }
+            : { x: contactPosition.contactX + edgeInsetPx, y: contactPosition.contactY };
+    const anchor = getVisualAnchor(
+      motionPosition.edge,
+      this.direction,
+      config.renderScale,
+      config.hostPaddingPx
+    );
+    const windowOrigin = getWindowOriginForContactPoint(insetContactPoint, anchor);
+
+    return {
+      edge: motionPosition.edge,
+      contactX: insetContactPoint.x,
+      contactY: insetContactPoint.y,
+      windowX: windowOrigin.x,
+      windowY: windowOrigin.y,
+      windowSize: config.windowSize,
+      spriteSizePx: config.spriteSizePx,
+      hostPaddingPx: config.hostPaddingPx
+    };
+  }
+
   private async ensureWindow(): Promise<BrowserWindow> {
     if (this.window && !this.window.isDestroyed()) {
       return this.window;
     }
 
-    const windowSize = this.getRuntimeConfig().windowSize;
+    const initialBounds = this.getInitialBounds();
     const preloadPath = join(__dirname, "..", "..", "preload", "pet-preload.js");
-    const initialBounds = this.getInitialBounds(windowSize);
 
     this.window = new BrowserWindow({
-      width: windowSize,
-      height: windowSize,
-      x: Math.round(initialBounds.x),
-      y: Math.round(initialBounds.y),
+      width: initialBounds.width,
+      height: initialBounds.height,
+      x: initialBounds.x,
+      y: initialBounds.y,
       show: false,
       frame: false,
       transparent: true,
@@ -510,6 +408,10 @@ export class SnailPetService {
       }
     });
 
+    this.window.setAlwaysOnTop(true, PET_ALWAYS_ON_TOP_LEVEL, 1);
+    this.window.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true
+    });
     this.window.setIgnoreMouseEvents(true, { forward: true });
 
     this.window.on("closed", () => {
@@ -531,8 +433,7 @@ export class SnailPetService {
     });
 
     await this.loadPetContents(this.window);
-    this.refreshCachedPerimeter();
-    this.snapToPerimeter();
+    this.syncWindowToTrackPosition();
     return this.window;
   }
 
@@ -555,45 +456,27 @@ export class SnailPetService {
     const nextSize = this.getRuntimeConfig().windowSize;
     const currentBounds = this.window.getBounds();
     if (currentBounds.width === nextSize && currentBounds.height === nextSize) {
+      this.syncWindowToTrackPosition();
       return;
     }
 
-    this.transition = null;
     this.window.setBounds({
       ...currentBounds,
       width: nextSize,
       height: nextSize
     });
-    this.refreshCachedPerimeter();
-    this.snapToPerimeter();
+    this.syncWindowToTrackPosition();
     this.pushVisualState();
     this.savePrefs();
   }
 
-  private getInitialBounds(windowSize: number): Rectangle {
-    if (this.savedPrefs && Number.isFinite(this.savedPrefs.x) && Number.isFinite(this.savedPrefs.y)) {
-      this.position = {
-        x: this.savedPrefs.x,
-        y: this.savedPrefs.y
-      };
-      return {
-        x: this.savedPrefs.x,
-        y: this.savedPrefs.y,
-        width: windowSize,
-        height: windowSize
-      };
-    }
-
-    const workArea = screen.getPrimaryDisplay().workArea;
-    this.position = {
-      x: workArea.x + workArea.width - windowSize - 20,
-      y: workArea.y + workArea.height - windowSize
-    };
+  private getInitialBounds(): Rectangle {
+    const placement = this.getTrackPlacement(this.lastDisplayBounds);
     return {
-      x: this.position.x,
-      y: this.position.y,
-      width: windowSize,
-      height: windowSize
+      x: Math.round(placement.windowX),
+      y: Math.round(placement.windowY),
+      width: placement.windowSize,
+      height: placement.windowSize
     };
   }
 
@@ -604,6 +487,7 @@ export class SnailPetService {
 
     if (this.visible) {
       this.window.showInactive();
+      this.window.moveTop();
       return;
     }
 
@@ -652,19 +536,15 @@ export class SnailPetService {
     this.lastTickAt = now;
 
     this.tickBehavior(now);
-
-    if (this.behaviorState === "move" && !this.transition) {
-      this.tickMoveVariation(now);
-    }
-
     if (this.behaviorState === "move") {
+      this.tickMoveVariation(now);
       const distance = this.getRuntimeConfig().moveSpeedPerTick * (dtMs / TICK_INTERVAL_MS);
-      this.advanceMovement(distance);
+      this.advanceMovement(distance, now);
     }
   }
 
   private tickBehavior(now: number): void {
-    if (this.transition || now < this.behaviorEndsAt) {
+    if (now < this.behaviorEndsAt) {
       return;
     }
 
@@ -672,7 +552,7 @@ export class SnailPetService {
   }
 
   private tickMoveVariation(now: number): void {
-    if (this.behaviorState !== "move" || this.transition || now < this.nextMoveDecisionAt) {
+    if (this.behaviorState !== "move" || now < this.nextMoveDecisionAt) {
       return;
     }
 
@@ -785,267 +665,84 @@ export class SnailPetService {
     this.nextMoveDecisionAt = this.getNextMoveDecisionAt(now);
   }
 
-  private advanceMovement(distancePx: number): void {
+  private advanceMovement(distancePx: number, now: number): void {
+    const bounds = this.lastDisplayBounds = this.getPrimaryDisplayBounds();
+    const perimeterLength = getPerimeterLength(bounds);
+    if (perimeterLength <= 0 || distancePx <= 0) {
+      return;
+    }
+
     let remainingDistance = distancePx;
     let guard = 0;
+    const startingEdge = this.getCurrentMotionEdge(bounds);
+    const startingDirection = this.direction;
 
     while (remainingDistance > 0.01 && guard < 16) {
-      remainingDistance = this.transition
-        ? this.advanceTransition(remainingDistance)
-        : this.advanceAlongEdge(remainingDistance);
-      guard += 1;
-    }
-  }
+      const current = resolveTrackPositionForDirection(this.trackOffsetPx, bounds, this.direction);
+      this.edgeVisitMask |= EDGE_BIT[current.edge];
 
-  private advanceAlongEdge(distancePx: number): number {
-    if (!this.window || this.window.isDestroyed()) {
-      return 0;
-    }
+      const distanceToBoundary =
+        this.direction > 0 ? current.edgeLength - current.progressOnEdge : current.progressOnEdge;
 
-    this.edgeVisitMask |= EDGE_BIT[this.edge];
-    const windowBounds = this.window.getBounds();
-    const perimeter = this.getPerimeterForCurrentDisplay(windowBounds);
-    const current = this.getVisibleEdgePosition(perimeter);
-    if (Math.abs(current.x - this.position.x) > 0.001 || Math.abs(current.y - this.position.y) > 0.001) {
-      this.setRawWindowPosition(current.x, current.y);
-    }
-
-    let nextX = current.x;
-    let nextY = current.y;
-
-    if (this.edge === "top" || this.edge === "bottom") {
-      nextY = this.edge === "top" ? perimeter.top : perimeter.bottom;
-      nextX = clampNumber(current.x + distancePx * this.direction, perimeter.left, perimeter.right);
-      const usedDistance = Math.abs(nextX - current.x);
-      this.setRawWindowPosition(nextX, nextY);
-      const remainingDistance = Math.max(0, distancePx - usedDistance);
-
-      if (Math.abs(nextX - (this.direction > 0 ? perimeter.right : perimeter.left)) <= 0.001) {
-        this.resolveCornerTransition(perimeter, windowBounds);
+      if (remainingDistance <= distanceToBoundary + 0.001) {
+        this.trackOffsetPx = normalizeTrackOffset(
+          this.trackOffsetPx + remainingDistance * this.direction,
+          perimeterLength
+        );
+        remainingDistance = 0;
+        break;
       }
 
-      return remainingDistance;
+      this.trackOffsetPx = normalizeTrackOffset(
+        this.trackOffsetPx + distanceToBoundary * this.direction,
+        perimeterLength
+      );
+      remainingDistance -= distanceToBoundary;
+
+      const circuitComplete = this.edgeVisitMask === ALL_EDGES_VISITED;
+      const continueChance = circuitComplete
+        ? this.getRuntimeConfig().cornerContinueChance
+        : CORNER_CONTINUE_BEFORE_FULL_CIRCUIT;
+      const shouldContinue = Math.random() < continueChance;
+
+      if (!shouldContinue) {
+        this.direction = (this.direction * -1) as TravelDirection;
+      } else if (circuitComplete) {
+        this.edgeVisitMask = 0;
+      }
+
+      guard += 1;
     }
 
-    nextX = this.edge === "left" ? perimeter.left : perimeter.right;
-    nextY = clampNumber(current.y + distancePx * this.direction, perimeter.top, perimeter.bottom);
-    const usedDistance = Math.abs(nextY - current.y);
-    this.setRawWindowPosition(nextX, nextY);
-    const remainingDistance = Math.max(0, distancePx - usedDistance);
+    this.syncWindowToTrackPosition(bounds);
 
-    if (Math.abs(nextY - (this.direction > 0 ? perimeter.bottom : perimeter.top)) <= 0.001) {
-      this.resolveCornerTransition(perimeter, windowBounds);
-    }
-
-    return remainingDistance;
-  }
-
-  private resolveCornerTransition(perimeter: PerimeterBounds, windowBounds: Rectangle): void {
-    const circuitComplete = this.edgeVisitMask === ALL_EDGES_VISITED;
-    const continueChance = circuitComplete
-      ? this.getRuntimeConfig().cornerContinueChance
-      : 0.92;
-
-    const shouldContinue = Math.random() < continueChance;
-    if (!shouldContinue) {
-      this.direction = (this.direction * -1) as TravelDirection;
+    const endingEdge = this.getCurrentMotionEdge(bounds);
+    if (startingEdge !== endingEdge || startingDirection !== this.direction) {
       this.pushVisualState();
       this.savePrefs();
       return;
     }
 
-    if (circuitComplete) {
-      this.edgeVisitMask = 0;
-    }
-
-    this.transition = this.createExitTransition(perimeter, windowBounds);
-    this.savePrefs();
+    this.maybeSavePrefs(now);
   }
 
-  private createExitTransition(perimeter: PerimeterBounds, windowBounds: Rectangle): EdgeTransition {
-    const corner = getCornerForEdge(this.edge, this.direction);
-    const adjacent = getAdjacentEdge(this.edge, this.direction);
-    const exitTarget = getOffscreenExitTarget(this.edge, this.direction, perimeter, windowBounds);
-
-    return {
-      fromEdge: this.edge,
-      toEdge: adjacent.toEdge,
-      phase: "exit",
-      corner,
-      entryDirection: adjacent.entryDirection,
-      targetX: exitTarget.x,
-      targetY: exitTarget.y
-    };
-  }
-
-  private advanceTransition(distancePx: number): number {
-    if (!this.transition || !this.window || this.window.isDestroyed()) {
-      return 0;
-    }
-
-    const result = this.moveTowardTarget(distancePx, {
-      x: this.transition.targetX,
-      y: this.transition.targetY
-    });
-
-    if (!result.reachedTarget) {
-      return result.remainingDistance;
-    }
-
-    if (this.transition.phase === "exit") {
-      this.beginEntryTransition();
-      return result.remainingDistance;
-    }
-
-    this.transition = null;
-    this.edgeVisitMask |= EDGE_BIT[this.edge];
-    this.snapToPerimeter();
-    this.pushVisualState();
-    this.savePrefs();
-    return result.remainingDistance;
-  }
-
-  private beginEntryTransition(): void {
-    if (!this.transition || !this.window || this.window.isDestroyed()) {
-      return;
-    }
-
-    const windowBounds = this.window.getBounds();
-    const perimeter = this.cachedPerimeter ?? this.refreshCachedPerimeter();
-    const entryStart = getEntryStartPosition(
-      this.transition.toEdge,
-      this.transition.entryDirection,
-      perimeter,
-      windowBounds
-    );
-    const entryTarget = getEntryTarget(
-      this.transition.toEdge,
-      this.transition.entryDirection,
-      perimeter
-    );
-
-    this.edge = this.transition.toEdge;
-    this.direction = this.transition.entryDirection;
-    this.setRawWindowPosition(entryStart.x, entryStart.y);
-    this.transition = {
-      ...this.transition,
-      phase: "entry",
-      targetX: entryTarget.x,
-      targetY: entryTarget.y
-    };
-    this.pushVisualState();
-    this.savePrefs();
-  }
-
-  private moveTowardTarget(distancePx: number, target: Position): {
-    remainingDistance: number;
-    reachedTarget: boolean;
-  } {
-    const deltaX = target.x - this.position.x;
-    const deltaY = target.y - this.position.y;
-
-    if (Math.abs(deltaX) > 0.001) {
-      const stepX = Math.sign(deltaX) * Math.min(Math.abs(deltaX), distancePx);
-      const nextX = this.position.x + stepX;
-      this.setRawWindowPosition(nextX, this.position.y);
-      return {
-        remainingDistance: distancePx - Math.abs(stepX),
-        reachedTarget: Math.abs(deltaX) <= distancePx + 0.001
-      };
-    }
-
-    if (Math.abs(deltaY) > 0.001) {
-      const stepY = Math.sign(deltaY) * Math.min(Math.abs(deltaY), distancePx);
-      const nextY = this.position.y + stepY;
-      this.setRawWindowPosition(this.position.x, nextY);
-      return {
-        remainingDistance: distancePx - Math.abs(stepY),
-        reachedTarget: Math.abs(deltaY) <= distancePx + 0.001
-      };
-    }
-
-    this.setRawWindowPosition(target.x, target.y);
-    return {
-      remainingDistance: distancePx,
-      reachedTarget: true
-    };
-  }
-
-  private getVisibleEdgePosition(perimeter: PerimeterBounds): Position {
-    const x = clampNumber(this.position.x, perimeter.left, perimeter.right);
-    const y = clampNumber(this.position.y, perimeter.top, perimeter.bottom);
-
-    if (this.edge === "top") {
-      return { x, y: perimeter.top };
-    }
-
-    if (this.edge === "bottom") {
-      return { x, y: perimeter.bottom };
-    }
-
-    if (this.edge === "left") {
-      return { x: perimeter.left, y };
-    }
-
-    return { x: perimeter.right, y };
-  }
-
-  private refreshCachedPerimeter(): PerimeterBounds {
-    const windowSize = this.getRuntimeConfig().windowSize;
-    const bounds = this.window?.getBounds() ?? {
-      x: Math.round(this.position.x),
-      y: Math.round(this.position.y),
-      width: windowSize,
-      height: windowSize
-    };
-    this.cachedPerimeter = getPerimeterBounds(this.getCurrentWorkArea(bounds), bounds);
-    return this.cachedPerimeter;
-  }
-
-  private getPerimeterForCurrentDisplay(_windowBounds?: Rectangle): PerimeterBounds {
-    return this.cachedPerimeter ?? this.refreshCachedPerimeter();
-  }
-
-  private getCurrentWorkArea(bounds?: Rectangle): Rectangle {
-    const activeBounds =
-      bounds ??
-      this.window?.getBounds() ?? {
-        x: Math.round(this.position.x),
-        y: Math.round(this.position.y),
-        width: this.getRuntimeConfig().windowSize,
-        height: this.getRuntimeConfig().windowSize
-      };
-
-    const point = {
-      x: activeBounds.x + Math.floor(activeBounds.width / 2),
-      y: activeBounds.y + Math.floor(activeBounds.height / 2)
-    };
-    return screen.getDisplayNearestPoint(point).workArea;
-  }
-
-  private snapToPerimeter(): void {
+  private syncWindowToTrackPosition(bounds = this.getPrimaryDisplayBounds()): void {
     if (!this.window || this.window.isDestroyed()) {
       return;
     }
 
-    const perimeter = this.getPerimeterForCurrentDisplay(this.window.getBounds());
-    const visiblePosition = this.getVisibleEdgePosition(perimeter);
-    this.setRawWindowPosition(visiblePosition.x, visiblePosition.y);
-  }
-
-  private setRawWindowPosition(x: number, y: number): void {
-    this.position = { x, y };
-
-    if (!this.window || this.window.isDestroyed()) {
-      return;
-    }
-
-    const bounds = this.window.getBounds();
+    const placement = this.getTrackPlacement(bounds);
+    const currentBounds = this.window.getBounds();
     this.window.setBounds({
-      ...bounds,
-      x: Math.round(x),
-      y: Math.round(y)
+      ...currentBounds,
+      x: Math.round(placement.windowX),
+      y: Math.round(placement.windowY),
+      width: placement.windowSize,
+      height: placement.windowSize
     });
+    if (this.visible) {
+      this.window.moveTop();
+    }
   }
 
   private pushVisualState(): void {
@@ -1054,13 +751,16 @@ export class SnailPetService {
     }
 
     const config = this.getRuntimeConfig();
-    const visualTransform = getVisualTransform(this.edge, this.direction);
+    const edge = this.getCurrentMotionEdge(this.lastDisplayBounds);
+    const visualTransform = getVisualTransform(edge, this.direction);
     this.window.webContents.send(PET_VISUAL_STATE_CHANNEL, {
       state: this.behaviorState,
       rotationDeg: visualTransform.rotationDeg,
       flipX: visualTransform.flipX,
       renderScale: config.renderScale,
       windowSize: config.windowSize,
+      spriteSizePx: config.spriteSizePx,
+      hostPaddingPx: config.hostPaddingPx,
       frameDurationMs: config.frameDurationMs
     });
   }
@@ -1089,40 +789,69 @@ export class SnailPetService {
 
   private loadPrefs(): PersistedPetState | null {
     try {
-      const parsed = JSON.parse(readFileSync(this.prefsPath, "utf8")) as Partial<PersistedPetState>;
-      if (!Number.isFinite(parsed.x) || !Number.isFinite(parsed.y)) {
-        return null;
+      const parsed = JSON.parse(readFileSync(this.prefsPath, "utf8")) as Record<string, unknown>;
+      const bounds = this.getPrimaryDisplayBounds();
+      const perimeterLength = getPerimeterLength(bounds);
+
+      if (Number.isFinite(parsed.trackOffsetPx)) {
+        return {
+          visible: parsed.visible !== false,
+          paused: Boolean(parsed.paused),
+          direction: clampDirection(parsed.direction),
+          trackOffsetPx: normalizeTrackOffset(parsed.trackOffsetPx as number, perimeterLength),
+          state: clampBehaviorState(parsed.state)
+        };
       }
 
-      return {
-        visible: parsed.visible !== false,
-        paused: Boolean(parsed.paused),
-        edge: clampEdge(parsed.edge),
-        direction: clampDirection(parsed.direction),
-        x: parsed.x as number,
-        y: parsed.y as number,
-        flipX: typeof parsed.flipX === "boolean" ? parsed.flipX : undefined,
-        state: clampBehaviorState(parsed.state)
-      };
+      const legacy = parsed as LegacyPersistedPetState;
+      if (
+        Number.isFinite(legacy.x) &&
+        Number.isFinite(legacy.y) &&
+        (legacy.edge === "top" || legacy.edge === "right" || legacy.edge === "bottom" || legacy.edge === "left")
+      ) {
+        return {
+          visible: legacy.visible !== false,
+          paused: Boolean(legacy.paused),
+          direction: clampDirection(legacy.direction),
+          trackOffsetPx: normalizeTrackOffset(
+            getTrackOffsetFromLegacyPosition(
+              clampEdge(legacy.edge),
+              legacy.x as number,
+              legacy.y as number,
+              bounds
+            ),
+            perimeterLength
+          ),
+          state: clampBehaviorState(legacy.state)
+        };
+      }
+
+      return null;
     } catch {
       return null;
     }
   }
 
+  private maybeSavePrefs(now: number): void {
+    if (now - this.lastPrefsSavedAt < POSITION_PERSIST_INTERVAL_MS) {
+      return;
+    }
+
+    this.savePrefs();
+  }
+
   private savePrefs(): void {
     try {
-      const visualTransform = getVisualTransform(this.edge, this.direction);
+      const bounds = this.getPrimaryDisplayBounds();
       const payload: PersistedPetState = {
         visible: this.visible,
         paused: this.paused,
-        edge: this.edge,
         direction: this.direction,
-        x: Math.round(this.position.x),
-        y: Math.round(this.position.y),
-        flipX: visualTransform.flipX,
+        trackOffsetPx: normalizeTrackOffset(this.trackOffsetPx, getPerimeterLength(bounds)),
         state: this.behaviorState
       };
       writeFileSync(this.prefsPath, JSON.stringify(payload, null, 2), "utf8");
+      this.lastPrefsSavedAt = Date.now();
     } catch (error) {
       logError("Failed to save snail pet preferences.", error);
     }

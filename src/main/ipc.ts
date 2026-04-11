@@ -1,4 +1,4 @@
-import { app, ipcMain } from "electron";
+import { app, dialog, ipcMain } from "electron";
 import { clearLastError, dismissResumeNotice, getAppState, patchAppState } from "./app-state";
 import type { CheckpointService } from "./checkpoint-service";
 import type { ExportService } from "./export-service";
@@ -10,7 +10,14 @@ import type { ReminderPromptService } from "./reminder-prompt-service";
 import type { SessionMachine } from "./session-machine";
 import type { SettingsService } from "./settings-service";
 import type { SnailPetService } from "./pet/snail-pet-service";
-import { hideDashboardWindow, showDashboardWindow, toggleDashboardWindow } from "./window-manager";
+import {
+  closeDashboardWindow,
+  hideDashboardWindow,
+  minimizeDashboardWindow,
+  showDashboardWindow,
+  toggleDashboardMaximize,
+  toggleDashboardWindow
+} from "./window-manager";
 import type { SessionCancelResult, SessionSummary } from "../shared/contracts";
 import { IPC_CHANNELS } from "../shared/ipc";
 
@@ -76,9 +83,24 @@ export function registerIpcHandlers(
   registerHandler(IPC_CHANNELS.showDashboard, () => showDashboardWindow());
   registerHandler(IPC_CHANNELS.hideDashboard, () => hideDashboardWindow());
   registerHandler(IPC_CHANNELS.toggleDashboard, () => toggleDashboardWindow());
+  registerHandler(IPC_CHANNELS.minimizeWindow, () => {
+    minimizeDashboardWindow();
+  });
+  registerHandler(IPC_CHANNELS.toggleMaximizeWindow, () => {
+    toggleDashboardMaximize();
+  });
+  registerHandler(IPC_CHANNELS.closeWindow, () => closeDashboardWindow());
   registerHandler(IPC_CHANNELS.clearLastError, () => clearLastError());
   registerHandler(IPC_CHANNELS.dismissResumeNotice, () => dismissResumeNotice());
   registerHandler(IPC_CHANNELS.settingsGet, () => settingsService.getSettings());
+  registerHandler(IPC_CHANNELS.settingsChooseExportDirectory, async () => {
+    const result = await dialog.showOpenDialog({
+      title: "Choose export directory",
+      properties: ["openDirectory", "createDirectory"]
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
   registerHandler(IPC_CHANNELS.settingsSet, async (_event, input) => {
     const settings = settingsService.setSettings(input as Parameters<typeof settingsService.setSettings>[0]);
     patchAppState({ settings });

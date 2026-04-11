@@ -55,6 +55,8 @@ let flipX = false;
 let rotationDeg = 0;
 let lastFrameAt = performance.now();
 let configuredWindowSize = 96;
+let configuredSpriteSizePx = 96;
+let currentHostPaddingPx = 0;
 let currentFrameDurationMs = 100;
 
 function applyCanvasSize(): void {
@@ -67,8 +69,8 @@ function applyCanvasSize(): void {
 
 function drawFrame(): void {
   const sheet = sheets[currentState];
-  const frameDisplaySize = configuredWindowSize;
   const sourceX = currentFrame * 32;
+  const spriteOrigin = -configuredWindowSize / 2 + currentHostPaddingPx;
 
   canvasContext.setTransform(1, 0, 0, 1, 0, 0);
   canvasContext.clearRect(0, 0, canvas.width, canvas.height);
@@ -86,10 +88,10 @@ function drawFrame(): void {
     0,
     32,
     32,
-    -frameDisplaySize / 2,
-    -frameDisplaySize / 2,
-    frameDisplaySize,
-    frameDisplaySize
+    spriteOrigin,
+    spriteOrigin,
+    configuredSpriteSizePx,
+    configuredSpriteSizePx
   );
 
   canvasContext.restore();
@@ -127,6 +129,8 @@ window.snailPetAPI.onVisualState((payload) => {
   flipX = payload.flipX;
   rotationDeg = payload.rotationDeg;
   configuredWindowSize = payload.windowSize;
+  configuredSpriteSizePx = payload.spriteSizePx;
+  currentHostPaddingPx = payload.hostPaddingPx;
   currentFrameDurationMs = payload.frameDurationMs;
   applyCanvasSize();
 

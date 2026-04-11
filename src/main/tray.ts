@@ -36,7 +36,7 @@ function buildTrayIcon(): Electron.NativeImage {
 function buildContextMenu(options: TrayManagerOptions): Electron.Menu {
   const state = getAppState();
   const toggleLabel =
-    state.dashboardVisibility === "visible" ? "Hide dashboard" : "Show dashboard";
+    state.dashboardVisibility === "visible" ? "Hide SessionTrail" : "Open SessionTrail";
   const activeSession = state.activeSession;
   const pendingRecovery = state.pendingRecovery;
   const pendingReminderPrompt = state.pendingReminderPrompt;
@@ -48,38 +48,6 @@ function buildContextMenu(options: TrayManagerOptions): Electron.Menu {
 
   return Menu.buildFromTemplate([
     {
-      label: `Session: ${sessionStatusLabel}`,
-      enabled: false
-    },
-    {
-      label: activeSession ? activeSession.title : "No session",
-      enabled: false
-    },
-    {
-      type: "separator"
-    },
-    {
-      label: "Start session",
-      enabled: !activeSession && !pendingRecovery && !pendingCheckpoint,
-      click: () => {
-        void options.onStartSession();
-      }
-    },
-    {
-      label: "Pause session",
-      enabled: activeSession?.status === "active" && !pendingRecovery && !pendingCheckpoint && !pendingReminderPrompt,
-      click: () => {
-        void options.onPauseSession();
-      }
-    },
-    {
-      label: "Resume session",
-      enabled: activeSession?.status === "paused" && !pendingRecovery && !pendingCheckpoint && !pendingReminderPrompt,
-      click: () => {
-        void options.onResumeSession();
-      }
-    },
-    {
       label: "Take Screenshot",
       enabled: Boolean(activeSession) && !pendingRecovery && !pendingCheckpoint,
       click: () => {
@@ -87,18 +55,59 @@ function buildContextMenu(options: TrayManagerOptions): Electron.Menu {
       }
     },
     {
-      label: "Complete session",
-      enabled: Boolean(activeSession) && !pendingRecovery && !pendingCheckpoint && !pendingReminderPrompt,
-      click: () => {
-        void options.onCompleteSession();
-      }
+      type: "separator"
     },
     {
-      label: "Cancel session",
-      enabled: Boolean(activeSession) && !pendingRecovery && !pendingCheckpoint && !pendingReminderPrompt,
-      click: () => {
-        void options.onCancelSession();
-      }
+      label: `Session: ${sessionStatusLabel}`,
+      enabled: false
+    },
+    {
+      label: "Session",
+      submenu: [
+        {
+          label: "Start session",
+          enabled: !activeSession && !pendingRecovery && !pendingCheckpoint,
+          click: () => {
+            void options.onStartSession();
+          }
+        },
+        {
+          label: "Pause session",
+          enabled:
+            activeSession?.status === "active" &&
+            !pendingRecovery &&
+            !pendingCheckpoint &&
+            !pendingReminderPrompt,
+          click: () => {
+            void options.onPauseSession();
+          }
+        },
+        {
+          label: "Resume session",
+          enabled:
+            activeSession?.status === "paused" &&
+            !pendingRecovery &&
+            !pendingCheckpoint &&
+            !pendingReminderPrompt,
+          click: () => {
+            void options.onResumeSession();
+          }
+        },
+        {
+          label: "Complete session",
+          enabled: Boolean(activeSession) && !pendingRecovery && !pendingCheckpoint && !pendingReminderPrompt,
+          click: () => {
+            void options.onCompleteSession();
+          }
+        },
+        {
+          label: "Cancel session",
+          enabled: Boolean(activeSession) && !pendingRecovery && !pendingCheckpoint && !pendingReminderPrompt,
+          click: () => {
+            void options.onCancelSession();
+          }
+        }
+      ]
     },
     ...(pendingRecovery
       ? [
@@ -122,9 +131,53 @@ function buildContextMenu(options: TrayManagerOptions): Electron.Menu {
           }
         ]
       : []),
-    {
-      type: "separator"
-    },
+    ...(snailPetEnabled
+      ? [
+          {
+            type: "separator" as const
+          },
+          {
+            label: "Snail Pet",
+            submenu: [
+              {
+                label: "Show Snail",
+                enabled: !snailPetVisible,
+                click: () => {
+                  void options.onShowSnail();
+                }
+              },
+              {
+                label: "Hide Snail",
+                enabled: snailPetVisible,
+                click: () => {
+                  void options.onHideSnail();
+                }
+              },
+              {
+                label: "Pause Snail",
+                enabled: snailPetVisible && !snailPetPaused,
+                click: () => {
+                  void options.onPauseSnail();
+                }
+              },
+              {
+                label: "Resume Snail",
+                enabled: snailPetVisible && snailPetPaused,
+                click: () => {
+                  void options.onResumeSnail();
+                }
+              }
+            ]
+          },
+          {
+            type: "separator" as const
+          }
+        ]
+      : [
+          {
+            type: "separator" as const
+          }
+        ]),
     {
       label: toggleLabel,
       click: () => {
@@ -132,49 +185,7 @@ function buildContextMenu(options: TrayManagerOptions): Electron.Menu {
       }
     },
     {
-      label: "Open dashboard",
-      click: () => {
-        void options.onShowDashboard();
-      }
-    },
-    {
-      label: "Snail Pet",
-      submenu: [
-        {
-          label: "Show Snail",
-          enabled: snailPetEnabled && !snailPetVisible,
-          click: () => {
-            void options.onShowSnail();
-          }
-        },
-        {
-          label: "Hide Snail",
-          enabled: snailPetEnabled && snailPetVisible,
-          click: () => {
-            void options.onHideSnail();
-          }
-        },
-        {
-          label: "Pause Snail",
-          enabled: snailPetEnabled && snailPetVisible && !snailPetPaused,
-          click: () => {
-            void options.onPauseSnail();
-          }
-        },
-        {
-          label: "Resume Snail",
-          enabled: snailPetEnabled && snailPetVisible && snailPetPaused,
-          click: () => {
-            void options.onResumeSnail();
-          }
-        }
-      ]
-    },
-    {
-      type: "separator"
-    },
-    {
-      label: "Quit SessionTrail",
+      label: "Quit Session Trail",
       click: () => {
         void options.onQuit();
       }

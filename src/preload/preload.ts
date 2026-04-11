@@ -8,6 +8,9 @@ const api: SessionTrailApi = {
     showDashboard: () => ipcRenderer.invoke(IPC_CHANNELS.showDashboard),
     hideDashboard: () => ipcRenderer.invoke(IPC_CHANNELS.hideDashboard),
     toggleDashboard: () => ipcRenderer.invoke(IPC_CHANNELS.toggleDashboard),
+    minimizeWindow: () => ipcRenderer.invoke(IPC_CHANNELS.minimizeWindow),
+    toggleMaximizeWindow: () => ipcRenderer.invoke(IPC_CHANNELS.toggleMaximizeWindow),
+    closeWindow: () => ipcRenderer.invoke(IPC_CHANNELS.closeWindow),
     clearLastError: () => ipcRenderer.invoke(IPC_CHANNELS.clearLastError),
     dismissResumeNotice: () => ipcRenderer.invoke(IPC_CHANNELS.dismissResumeNotice),
     quit: () => ipcRenderer.invoke(IPC_CHANNELS.quit),
@@ -28,7 +31,8 @@ const api: SessionTrailApi = {
   },
   settings: {
     get: () => ipcRenderer.invoke(IPC_CHANNELS.settingsGet),
-    set: (input) => ipcRenderer.invoke(IPC_CHANNELS.settingsSet, input)
+    set: (input) => ipcRenderer.invoke(IPC_CHANNELS.settingsSet, input),
+    chooseExportDirectory: () => ipcRenderer.invoke(IPC_CHANNELS.settingsChooseExportDirectory)
   },
   session: {
     start: (input) => ipcRenderer.invoke(IPC_CHANNELS.sessionStart, input),

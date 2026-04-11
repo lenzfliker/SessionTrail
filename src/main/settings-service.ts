@@ -1,6 +1,11 @@
 import Store from "electron-store";
 import { app } from "electron";
 import type { AppSettings, UpdateSettingsInput } from "../shared/contracts";
+import {
+  DEFAULT_SNAIL_PET_INSET_PROFILE,
+  migrateSnailPetInsetProfile,
+  normalizeSnailPetInsetProfile
+} from "../shared/snail-pet-inset-profile";
 import { logInfo } from "./logger";
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -18,6 +23,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   snailPetEnabled: false,
   snailPetScale: 3,
   snailPetSpeed: "normal",
+  snailPetInsetProfile: DEFAULT_SNAIL_PET_INSET_PROFILE,
   theme: "clean"
 };
 
@@ -66,6 +72,10 @@ function normalizeSnailPetSpeed(value: unknown): AppSettings["snailPetSpeed"] {
   return "normal";
 }
 
+type StoredSettings = Partial<AppSettings> & {
+  snailPetEdgeInsetPx?: unknown;
+};
+
 export class SettingsService {
   private readonly store = new Store<AppSettings>({
     name: "settings",
@@ -79,7 +89,7 @@ export class SettingsService {
   }
 
   public getSettings(): AppSettings {
-    const stored = (this.store as any).store as Partial<AppSettings>;
+    const stored = (this.store as any).store as StoredSettings;
     return {
       reminderIntervalMinutes: clampReminderIntervalMinutes(stored.reminderIntervalMinutes ?? DEFAULT_SETTINGS.reminderIntervalMinutes),
       defaultTargetMinutes: clampDefaultTargetMinutes(
@@ -107,6 +117,10 @@ export class SettingsService {
       snailPetEnabled: Boolean(stored.snailPetEnabled ?? DEFAULT_SETTINGS.snailPetEnabled),
       snailPetScale: normalizeSnailPetScale(stored.snailPetScale ?? DEFAULT_SETTINGS.snailPetScale),
       snailPetSpeed: normalizeSnailPetSpeed(stored.snailPetSpeed ?? DEFAULT_SETTINGS.snailPetSpeed),
+      snailPetInsetProfile: migrateSnailPetInsetProfile(
+        stored.snailPetInsetProfile,
+        stored.snailPetEdgeInsetPx
+      ),
       theme: "clean"
     };
   }
@@ -164,6 +178,10 @@ export class SettingsService {
         input.snailPetSpeed !== undefined
           ? normalizeSnailPetSpeed(input.snailPetSpeed)
           : current.snailPetSpeed,
+      snailPetInsetProfile:
+        input.snailPetInsetProfile !== undefined
+          ? normalizeSnailPetInsetProfile(input.snailPetInsetProfile)
+          : current.snailPetInsetProfile,
       theme: "clean"
     };
 

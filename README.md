@@ -6,6 +6,8 @@
 
 SessionTrail is a Windows-first desktop tray app for capturing focused work sessions, checkpoint screenshots, short notes, voice-over narration, and final MP4 recap videos.
 
+Contributor reference: `https://github.com/codex`
+
 ## Features
 
 - Tray-based session control with start, pause, resume, complete, and cancel flows.

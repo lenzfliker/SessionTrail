@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { AppSettings, AppState, SnailPetRuntimeSummary } from "../shared/contracts";
+import { DEFAULT_SNAIL_PET_INSET_PROFILE } from "../shared/snail-pet-inset-profile";
 
 const stateEvents = new EventEmitter();
 const defaultSettings: AppSettings = {
@@ -17,6 +18,7 @@ const defaultSettings: AppSettings = {
   snailPetEnabled: false,
   snailPetScale: 3,
   snailPetSpeed: "normal",
+  snailPetInsetProfile: DEFAULT_SNAIL_PET_INSET_PROFILE,
   theme: "clean"
 };
 
@@ -35,6 +37,7 @@ let currentState: AppState = {
   trayReady: false,
   dashboardVisibility: "hidden",
   dashboardFullscreen: false,
+  dashboardMaximized: false,
   activeSession: null,
   recentSessions: [],
   pendingRecovery: null,
@@ -58,6 +61,7 @@ export function initializeAppState(version: string): AppState {
     trayReady: false,
     dashboardVisibility: "hidden",
     dashboardFullscreen: false,
+    dashboardMaximized: false,
     activeSession: null,
     recentSessions: [],
     pendingRecovery: null,

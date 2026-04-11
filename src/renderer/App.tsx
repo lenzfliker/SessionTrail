@@ -23,6 +23,7 @@ import { ReminderBanner } from "./components/ReminderBanner";
 import { SettingsView } from "./components/SettingsView";
 import { TrackView } from "./components/TrackView";
 import { ToastStack, type ToastMessage, type ToastTone } from "./components/ToastStack";
+import { WindowChrome } from "./components/WindowChrome";
 import { useRetroFeedback } from "./hooks/useRetroFeedback";
 import { useSessionWorkspace } from "./hooks/useSessionWorkspace";
 import {
@@ -41,9 +42,13 @@ import type {
   ReflectSummary,
   SessionHistoryPage,
   SessionHistoryStatusFilter,
+  SnailPetInsetProfile,
+  SnailPetSpeed,
+  SnailPetScale,
   SessionSummary,
   UpdateSettingsInput,
 } from "../shared/contracts";
+import { DEFAULT_SNAIL_PET_INSET_PROFILE } from "../shared/snail-pet-inset-profile";
 import {
   buildSegmentsFromMarkers,
   clamp,
@@ -68,6 +73,21 @@ type PreviewSelectionState = {
   selectedSegmentId: string | null;
 };
 
+function getSnailInsetForScale(profile: SnailPetInsetProfile, scale: SnailPetScale): number {
+  return profile[scale] ?? profile[3];
+}
+
+function patchSnailInsetProfile(
+  profile: SnailPetInsetProfile,
+  scale: SnailPetScale,
+  insetPx: number
+): SnailPetInsetProfile {
+  return {
+    ...profile,
+    [scale]: insetPx
+  };
+}
+
 function createToastId(): string {
   return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
@@ -75,6 +95,7 @@ function createToastId(): string {
 }
 const APP_ICON_SRC = "/icons/sessiontrail-app-icon.png";
 const HISTORY_PAGE_SIZE = 12;
+const SNAIL_CALIBRATION_PREVIEW_DEBOUNCE_MS = 75;
 const VIEW_TABS: Array<{ mode: ViewMode; label: string; icon: AnimatedIconComponent }> = [
   { mode: "track", label: "Track", icon: ClockIcon },
   { mode: "compose", label: "Compose", icon: GalleryIcon },
@@ -91,6 +112,7 @@ const placeholderState: AppState = {
   trayReady: false,
   dashboardVisibility: "hidden",
   dashboardFullscreen: false,
+  dashboardMaximized: false,
   activeSession: null,
   recentSessions: [],
   pendingRecovery: null,
@@ -114,6 +136,7 @@ const placeholderState: AppState = {
     snailPetEnabled: false,
     snailPetScale: 3,
     snailPetSpeed: "normal",
+    snailPetInsetProfile: DEFAULT_SNAIL_PET_INSET_PROFILE,
     theme: "clean"
   },
   snailPet: {
@@ -139,6 +162,7 @@ export function App() {
   const [dragState, setDragState] = useState<DragState>(null);
   const [checkpointNoteText, setCheckpointNoteText] = useState("");
   const [inspectorNoteText, setInspectorNoteText] = useState("");
+  const settingsDraftDirtyRef = useRef(false);
   const [settingsDraft, setSettingsDraft] = useState<UpdateSettingsInput>({
     reminderIntervalMinutes: 10,
     defaultTargetMinutes: 120,
@@ -153,8 +177,17 @@ export function App() {
     uiMotionEnabled: true,
     snailPetEnabled: false,
     snailPetScale: 3,
-    snailPetSpeed: "normal"
+    snailPetSpeed: "normal",
+    snailPetInsetProfile: DEFAULT_SNAIL_PET_INSET_PROFILE
   });
+  const [snailCalibrationOpen, setSnailCalibrationOpen] = useState(false);
+  const [snailCalibrationScale, setSnailCalibrationScale] = useState<SnailPetScale>(3);
+  const [snailCalibrationDraftInsetPx, setSnailCalibrationDraftInsetPx] = useState(
+    DEFAULT_SNAIL_PET_INSET_PROFILE[3]
+  );
+  const [snailCalibrationSavedInsetPx, setSnailCalibrationSavedInsetPx] = useState(
+    DEFAULT_SNAIL_PET_INSET_PROFILE[3]
+  );
   const [historyQuery, setHistoryQuery] = useState("");
   const deferredHistoryQuery = useDeferredValue(historyQuery);
   const [historyStatus, setHistoryStatus] = useState<SessionHistoryStatusFilter>("all");
@@ -195,6 +228,7 @@ export function App() {
   const preparedVoiceOverPreviewUrlRef = useRef<string | null>(null);
   const importVideoPlaybackMsRef = useRef<Record<string, number>>({});
   const importVideoEndedRef = useRef<Record<string, boolean>>({});
+  const snailCalibrationPreviewTimerRef = useRef<number | null>(null);
   const { motionEnabled, play: playFeedback } = useRetroFeedback(
     state.settings.uiSoundsEnabled,
     state.settings.uiMotionEnabled
@@ -270,16 +304,238 @@ export function App() {
     }
   };
 
+  const clearSnailCalibrationPreviewTimer = useCallback(() => {
+    if (snailCalibrationPreviewTimerRef.current === null) {
+      return;
+    }
+
+    window.clearTimeout(snailCalibrationPreviewTimerRef.current);
+    snailCalibrationPreviewTimerRef.current = null;
+  }, []);
+
+  const getCurrentSnailInsetProfile = useCallback(
+    (draft: UpdateSettingsInput = settingsDraft): SnailPetInsetProfile =>
+      draft.snailPetInsetProfile ?? state.settings.snailPetInsetProfile,
+    [settingsDraft, state.settings.snailPetInsetProfile]
+  );
+
+  const openSnailCalibration = useCallback(
+    (scale: SnailPetScale, profile: SnailPetInsetProfile) => {
+      const savedInsetPx = getSnailInsetForScale(profile, scale);
+      setSnailCalibrationScale(scale);
+      setSnailCalibrationDraftInsetPx(savedInsetPx);
+      setSnailCalibrationSavedInsetPx(savedInsetPx);
+      setSnailCalibrationOpen(true);
+    },
+    []
+  );
+
+  const handleSettingsChange = useCallback(
+    (patch: UpdateSettingsInput) => {
+      settingsDraftDirtyRef.current = true;
+      setSettingsDraft((current) => ({ ...current, ...patch }));
+    },
+    []
+  );
+
+  const handleSnailEnabledChange = useCallback(
+    async (enabled: boolean) => {
+      clearSnailCalibrationPreviewTimer();
+      const nextScale = settingsDraft.snailPetScale ?? state.settings.snailPetScale;
+      const nextSpeed = settingsDraft.snailPetSpeed ?? state.settings.snailPetSpeed;
+      const nextInsetProfile = getCurrentSnailInsetProfile();
+      const settings = await window.sessionTrail.settings.set({
+        snailPetEnabled: enabled,
+        snailPetScale: nextScale,
+        snailPetSpeed: nextSpeed,
+        snailPetInsetProfile: nextInsetProfile
+      });
+
+      setSettingsDraft((current) => ({
+        ...current,
+        snailPetEnabled: settings.snailPetEnabled,
+        snailPetScale: settings.snailPetScale,
+        snailPetSpeed: settings.snailPetSpeed,
+        snailPetInsetProfile: settings.snailPetInsetProfile
+      }));
+
+      if (!enabled) {
+        setSnailCalibrationOpen(false);
+      }
+    },
+    [
+      clearSnailCalibrationPreviewTimer,
+      getCurrentSnailInsetProfile,
+      settingsDraft.snailPetScale,
+      settingsDraft.snailPetSpeed,
+      state.settings.snailPetScale,
+      state.settings.snailPetSpeed
+    ]
+  );
+
+  const handleSnailSpeedChange = useCallback(
+    async (speed: SnailPetSpeed) => {
+      clearSnailCalibrationPreviewTimer();
+      const nextEnabled = Boolean(settingsDraft.snailPetEnabled ?? state.settings.snailPetEnabled);
+      const nextScale = settingsDraft.snailPetScale ?? state.settings.snailPetScale;
+      const nextInsetProfile = getCurrentSnailInsetProfile();
+      const settings = await window.sessionTrail.settings.set({
+        snailPetEnabled: nextEnabled,
+        snailPetScale: nextScale,
+        snailPetSpeed: speed,
+        snailPetInsetProfile: nextInsetProfile
+      });
+
+      setSettingsDraft((current) => ({
+        ...current,
+        snailPetEnabled: settings.snailPetEnabled,
+        snailPetScale: settings.snailPetScale,
+        snailPetSpeed: settings.snailPetSpeed,
+        snailPetInsetProfile: settings.snailPetInsetProfile
+      }));
+    },
+    [
+      clearSnailCalibrationPreviewTimer,
+      getCurrentSnailInsetProfile,
+      settingsDraft.snailPetEnabled,
+      settingsDraft.snailPetScale,
+      state.settings.snailPetEnabled,
+      state.settings.snailPetScale
+    ]
+  );
+
+  const handleSnailScaleChange = useCallback(
+    (scale: SnailPetScale) => {
+      const profile = getCurrentSnailInsetProfile();
+      setSettingsDraft((current) => ({
+        ...current,
+        snailPetScale: scale,
+        snailPetInsetProfile: profile
+      }));
+      openSnailCalibration(scale, profile);
+    },
+    [getCurrentSnailInsetProfile, openSnailCalibration]
+  );
+
+  const handleRecalibrateSnail = useCallback(() => {
+    const scale = settingsDraft.snailPetScale ?? state.settings.snailPetScale;
+    openSnailCalibration(scale, getCurrentSnailInsetProfile());
+  }, [getCurrentSnailInsetProfile, openSnailCalibration, settingsDraft.snailPetScale, state.settings.snailPetScale]);
+
+  const handleSnailCalibrationInsetChange = useCallback(
+    (insetPx: number) => {
+      setSnailCalibrationDraftInsetPx(insetPx);
+      clearSnailCalibrationPreviewTimer();
+      let nextProfile: SnailPetInsetProfile = state.settings.snailPetInsetProfile;
+      setSettingsDraft((current) => {
+        const profile = current.snailPetInsetProfile ?? state.settings.snailPetInsetProfile;
+        nextProfile = patchSnailInsetProfile(profile, snailCalibrationScale, insetPx);
+        return {
+          ...current,
+          snailPetInsetProfile: nextProfile
+        };
+      });
+      snailCalibrationPreviewTimerRef.current = window.setTimeout(() => {
+        void runPassiveAction(async () => {
+          await window.sessionTrail.settings.set({
+            snailPetEnabled: Boolean(settingsDraft.snailPetEnabled ?? state.settings.snailPetEnabled),
+            snailPetScale: settingsDraft.snailPetScale ?? state.settings.snailPetScale,
+            snailPetInsetProfile: nextProfile
+          });
+        });
+      }, SNAIL_CALIBRATION_PREVIEW_DEBOUNCE_MS);
+    },
+    [
+      clearSnailCalibrationPreviewTimer,
+      runPassiveAction,
+      settingsDraft.snailPetEnabled,
+      settingsDraft.snailPetScale,
+      snailCalibrationScale,
+      state.settings.snailPetEnabled,
+      state.settings.snailPetInsetProfile,
+      state.settings.snailPetScale
+    ]
+  );
+
+  const handleSnailCalibrationCancel = useCallback(() => {
+    clearSnailCalibrationPreviewTimer();
+    const revertedProfile = patchSnailInsetProfile(
+      state.settings.snailPetInsetProfile,
+      snailCalibrationScale,
+      snailCalibrationSavedInsetPx
+    );
+    setSettingsDraft((current) => ({
+      ...current,
+      snailPetInsetProfile: revertedProfile
+    }));
+    setSnailCalibrationDraftInsetPx(snailCalibrationSavedInsetPx);
+    setSnailCalibrationOpen(false);
+    void runPassiveAction(async () => {
+      await window.sessionTrail.settings.set({
+        snailPetEnabled: Boolean(settingsDraft.snailPetEnabled ?? state.settings.snailPetEnabled),
+        snailPetScale: settingsDraft.snailPetScale ?? state.settings.snailPetScale,
+        snailPetInsetProfile: revertedProfile
+      });
+    });
+  }, [
+    clearSnailCalibrationPreviewTimer,
+    runPassiveAction,
+    settingsDraft.snailPetEnabled,
+    settingsDraft.snailPetScale,
+    snailCalibrationSavedInsetPx,
+    snailCalibrationScale,
+    state.settings.snailPetEnabled,
+    state.settings.snailPetInsetProfile,
+    state.settings.snailPetScale
+  ]);
+
+  const applySnailCalibration = useCallback(async () => {
+    clearSnailCalibrationPreviewTimer();
+    const nextProfile = patchSnailInsetProfile(
+      getCurrentSnailInsetProfile(),
+      snailCalibrationScale,
+      snailCalibrationDraftInsetPx
+    );
+    const nextScale = settingsDraft.snailPetScale ?? state.settings.snailPetScale;
+    const settings = await window.sessionTrail.settings.set({
+      snailPetScale: nextScale,
+      snailPetEnabled: Boolean(settingsDraft.snailPetEnabled ?? state.settings.snailPetEnabled),
+      snailPetInsetProfile: nextProfile
+    });
+    setSettingsDraft((current) => ({
+      ...current,
+      snailPetScale: settings.snailPetScale,
+      snailPetInsetProfile: settings.snailPetInsetProfile
+    }));
+    setSnailCalibrationSavedInsetPx(
+      getSnailInsetForScale(settings.snailPetInsetProfile, snailCalibrationScale)
+    );
+    setSnailCalibrationDraftInsetPx(
+      getSnailInsetForScale(settings.snailPetInsetProfile, snailCalibrationScale)
+    );
+    setSnailCalibrationOpen(false);
+  }, [
+    clearSnailCalibrationPreviewTimer,
+    getCurrentSnailInsetProfile,
+    settingsDraft.snailPetEnabled,
+    settingsDraft.snailPetScale,
+    snailCalibrationDraftInsetPx,
+    snailCalibrationScale,
+    state.settings.snailPetEnabled,
+    state.settings.snailPetScale
+  ]);
+
   useEffect(() => {
     let mounted = true;
     const unsubscribe = window.sessionTrail.app.onStateChanged((nextState) => mounted && setState(nextState));
     void window.sessionTrail.app.getState().then((nextState) => mounted && setState(nextState));
     return () => {
       mounted = false;
+      clearSnailCalibrationPreviewTimer();
       unsubscribe();
       streamRef.current?.getTracks().forEach((track) => track.stop());
     };
-  }, []);
+  }, [clearSnailCalibrationPreviewTimer]);
 
   useEffect(() => {
     if (viewMode !== "track" && viewMode !== "compose") {
@@ -355,22 +611,28 @@ export function App() {
   }, [state.pendingCheckpoint?.checkpoint.id, state.pendingCheckpoint?.checkpoint.noteText]);
 
   useEffect(() => {
-    setSettingsDraft({
-      reminderIntervalMinutes: state.settings.reminderIntervalMinutes,
-      defaultTargetMinutes: state.settings.defaultTargetMinutes,
-      launchAtLogin: state.settings.launchAtLogin,
-      captureDelaySeconds: state.settings.captureDelaySeconds,
-      reminderSnoozeMinutes: state.settings.reminderSnoozeMinutes,
-      reflectDailyGoalMinutes: state.settings.reflectDailyGoalMinutes,
-      startupDashboardBehavior: state.settings.startupDashboardBehavior,
-      openDashboardOnReminder: state.settings.openDashboardOnReminder,
-      defaultExportDirectory: state.settings.defaultExportDirectory,
-      uiSoundsEnabled: state.settings.uiSoundsEnabled,
-      uiMotionEnabled: state.settings.uiMotionEnabled,
-      snailPetEnabled: state.settings.snailPetEnabled,
-      snailPetScale: state.settings.snailPetScale,
-      snailPetSpeed: state.settings.snailPetSpeed
-    });
+    // Only sync the draft from backend state when the user has no pending
+    // edits — prevents the snail-pet state broadcasts (which fire every ~1s)
+    // from wiping unsaved changes out of the form.
+    if (!settingsDraftDirtyRef.current) {
+      setSettingsDraft({
+        reminderIntervalMinutes: state.settings.reminderIntervalMinutes,
+        defaultTargetMinutes: state.settings.defaultTargetMinutes,
+        launchAtLogin: state.settings.launchAtLogin,
+        captureDelaySeconds: state.settings.captureDelaySeconds,
+        reminderSnoozeMinutes: state.settings.reminderSnoozeMinutes,
+        reflectDailyGoalMinutes: state.settings.reflectDailyGoalMinutes,
+        startupDashboardBehavior: state.settings.startupDashboardBehavior,
+        openDashboardOnReminder: state.settings.openDashboardOnReminder,
+        defaultExportDirectory: state.settings.defaultExportDirectory,
+        uiSoundsEnabled: state.settings.uiSoundsEnabled,
+        uiMotionEnabled: state.settings.uiMotionEnabled,
+        snailPetEnabled: state.settings.snailPetEnabled,
+        snailPetScale: state.settings.snailPetScale,
+        snailPetSpeed: state.settings.snailPetSpeed,
+        snailPetInsetProfile: state.settings.snailPetInsetProfile
+      });
+    }
   }, [state.settings]);
 
   useEffect(() => {
@@ -1034,8 +1296,10 @@ export function App() {
       uiMotionEnabled: Boolean(settingsDraft.uiMotionEnabled ?? state.settings.uiMotionEnabled),
       snailPetEnabled: Boolean(settingsDraft.snailPetEnabled ?? state.settings.snailPetEnabled),
       snailPetScale: settingsDraft.snailPetScale ?? state.settings.snailPetScale,
-      snailPetSpeed: settingsDraft.snailPetSpeed ?? state.settings.snailPetSpeed
+      snailPetSpeed: settingsDraft.snailPetSpeed ?? state.settings.snailPetSpeed,
+      snailPetInsetProfile: getCurrentSnailInsetProfile()
     });
+    settingsDraftDirtyRef.current = false;
   };
 
   const segmentStyles = useMemo(() => {
@@ -1212,68 +1476,76 @@ export function App() {
   return (
     <MotionConfig reducedMotion="user">
       <AnimatedIconProvider enabled={motionEnabled}>
-        <main className={appShellClassName}>
-        <header className="topbar">
-          <div className="topbar__brand">
-            <div className="topbar__brand-mark">
-              <img className="topbar__app-icon" src={APP_ICON_SRC} alt="" />
-            </div>
-            <div className="topbar__brand-copy">
-              <div className="topbar__wordmark">
-                <span className="topbar__wordmark-title">{state.appName}</span>
+        <div className="dashboard-window">
+          <WindowChrome maximized={state.dashboardMaximized} />
+          <main className={appShellClassName}>
+            <header className="topbar">
+              <div className="topbar__brand">
+                <div className="topbar__brand-mark">
+                  <img className="topbar__app-icon" src={APP_ICON_SRC} alt="" />
+                </div>
+                <div className="topbar__brand-copy">
+                  <div className="topbar__wordmark">
+                    <span className="topbar__wordmark-title">{state.appName}</span>
+                  </div>
+                  <div className={`topbar__session-pill topbar__session-pill--${headerStatus}`}>
+                    <span className={`topbar__session-pill-status topbar__session-pill-status--${headerStatus}`}>
+                      <IconLabel
+                        icon={HeaderStatusIcon}
+                        label={headerStatus}
+                        size={16}
+                        active={headerStatus !== "idle"}
+                      />
+                    </span>
+                    <span className="topbar__session-pill-title" title={headerSessionTitle}>
+                      {headerSessionTitle}
+                    </span>
+                  </div>
+                </div>
               </div>
-              <div className={`topbar__session-pill topbar__session-pill--${headerStatus}`}>
-                <span className={`topbar__session-pill-status topbar__session-pill-status--${headerStatus}`}>
-                  <IconLabel
-                    icon={HeaderStatusIcon}
-                    label={headerStatus}
-                    size={16}
-                    active={headerStatus !== "idle"}
-                  />
-                </span>
-                <span className="topbar__session-pill-title" title={headerSessionTitle}>
-                  {headerSessionTitle}
-                </span>
-              </div>
-            </div>
-          </div>
-          <LayoutGroup id="sessiontrail-topbar-nav">
-            <nav className="topbar__nav">
-              {VIEW_TABS.map(({ mode, label, icon: Icon }) => (
-                <button
-                key={mode}
-                type="button"
-                className={viewMode === mode ? "tab tab--active" : "tab"}
-                onClick={() => setViewMode(mode)}
-              >
-                {motionEnabled && viewMode === mode ? (
-                  <motion.span
-                    className="tab__active-indicator"
-                    layoutId="active-tab"
-                    transition={SPRING_TRANSITION}
-                  />
-                ) : null}
-                <IconLabel icon={Icon} label={label} active={viewMode === mode} className="tab__label" size={17} />
-              </button>
-              ))}
-            </nav>
-          </LayoutGroup>
-        </header>
+              <LayoutGroup id="sessiontrail-topbar-nav">
+                <nav className="topbar__nav">
+                  {VIEW_TABS.map(({ mode, label, icon: Icon }) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={viewMode === mode ? "tab tab--active" : "tab"}
+                      onClick={() => setViewMode(mode)}
+                    >
+                      {motionEnabled && viewMode === mode ? (
+                        <motion.span
+                          className="tab__active-indicator"
+                          layoutId="active-tab"
+                          transition={SPRING_TRANSITION}
+                        />
+                      ) : null}
+                      <IconLabel
+                        icon={Icon}
+                        label={label}
+                        active={viewMode === mode}
+                        className="tab__label"
+                        size={17}
+                      />
+                    </button>
+                  ))}
+                </nav>
+              </LayoutGroup>
+            </header>
 
-        <ToastStack toasts={toasts} motionEnabled={motionEnabled} onDismiss={dismissToast} />
+            <ToastStack toasts={toasts} motionEnabled={motionEnabled} onDismiss={dismissToast} />
 
-      <AnimatePresence initial={false}>
-        {state.pendingRecovery ? (
-          <RecoveryBanner
-            recovery={state.pendingRecovery}
-            busy={busy}
-            motionEnabled={motionEnabled}
-            onResume={() => void runAction(() => window.sessionTrail.recovery.resume(state.pendingRecovery?.session.id))}
-            onLeavePaused={() => void runAction(() => window.sessionTrail.recovery.leavePaused(state.pendingRecovery?.session.id))}
-            onEndSession={() => void runAction(() => window.sessionTrail.recovery.endNow(state.pendingRecovery?.session.id))}
-          />
-        ) : null}
-      </AnimatePresence>
+            <AnimatePresence initial={false}>
+              {state.pendingRecovery ? (
+                <RecoveryBanner
+                  recovery={state.pendingRecovery}
+                  busy={busy}
+                  motionEnabled={motionEnabled}
+                  onResume={() => void runAction(() => window.sessionTrail.recovery.resume(state.pendingRecovery?.session.id))}
+                  onLeavePaused={() => void runAction(() => window.sessionTrail.recovery.leavePaused(state.pendingRecovery?.session.id))}
+                  onEndSession={() => void runAction(() => window.sessionTrail.recovery.endNow(state.pendingRecovery?.session.id))}
+                />
+              ) : null}
+            </AnimatePresence>
 
       <AnimatePresence initial={false}>
       {state.resumeNotice && activeSession?.id === state.resumeNotice.sessionId ? (
@@ -1679,7 +1951,18 @@ export function App() {
                 draft={settingsDraft}
                 busy={busy}
                 motionEnabled={motionEnabled}
-                onChange={(patch) => setSettingsDraft((current) => ({ ...current, ...patch }))}
+                onChange={handleSettingsChange}
+                onSnailEnabledChange={(enabled) => void runPassiveAction(() => handleSnailEnabledChange(enabled))}
+                onSnailSpeedChange={(speed) => void runPassiveAction(() => handleSnailSpeedChange(speed))}
+                onSnailScaleChange={handleSnailScaleChange}
+                snailCalibrationOpen={snailCalibrationOpen}
+                snailCalibrationScale={snailCalibrationScale}
+                snailCalibrationDraftInsetPx={snailCalibrationDraftInsetPx}
+                onSnailCalibrationInsetChange={handleSnailCalibrationInsetChange}
+                onApplySnailCalibration={() => void runAction(() => applySnailCalibration())}
+                onCancelSnailCalibration={handleSnailCalibrationCancel}
+                onRecalibrateSnail={handleRecalibrateSnail}
+                onChooseExportDirectory={() => window.sessionTrail.settings.chooseExportDirectory()}
                 onSave={() => void runAction(() => saveSettings())}
                 onShow={() => void window.sessionTrail.app.showDashboard()}
                 onHide={() => void window.sessionTrail.app.hideDashboard()}
@@ -1689,8 +1972,9 @@ export function App() {
           </section>
         </motion.div>
       )}
-      </AnimatePresence>
-      </main>
+            </AnimatePresence>
+          </main>
+        </div>
       </AnimatedIconProvider>
     </MotionConfig>
   );

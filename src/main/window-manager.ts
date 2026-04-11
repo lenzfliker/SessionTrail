@@ -33,14 +33,9 @@ export async function createDashboardWindow(): Promise<BrowserWindow> {
     show: false,
     title: "SessionTrail",
     autoHideMenuBar: true,
+    frame: false,
     backgroundColor: "#ffffff",
     icon: resolveAppAssetPath("sessiontrail-app-icon.png"),
-    titleBarStyle: "hidden",
-    titleBarOverlay: {
-      color: "#ffffff",
-      symbolColor: "#111827",
-      height: 36
-    },
     webPreferences: {
       preload: join(__dirname, "..", "preload", "preload.js"),
       contextIsolation: true,
@@ -64,6 +59,14 @@ export async function createDashboardWindow(): Promise<BrowserWindow> {
 
   dashboardWindow.on("leave-full-screen", () => {
     patchAppState({ dashboardFullscreen: false });
+  });
+
+  dashboardWindow.on("maximize", () => {
+    patchAppState({ dashboardMaximized: true });
+  });
+
+  dashboardWindow.on("unmaximize", () => {
+    patchAppState({ dashboardMaximized: false });
   });
 
   dashboardWindow.on("close", (event) => {
@@ -102,7 +105,10 @@ export async function createDashboardWindow(): Promise<BrowserWindow> {
   });
 
   await loadDashboardContents(dashboardWindow);
-  patchAppState({ dashboardFullscreen: dashboardWindow.isFullScreen() });
+  patchAppState({
+    dashboardFullscreen: dashboardWindow.isFullScreen(),
+    dashboardMaximized: dashboardWindow.isMaximized()
+  });
 
   return dashboardWindow;
 }
@@ -150,6 +156,33 @@ export function toggleDashboardWindow(): AppState {
   }
 
   return getAppState();
+}
+
+export function minimizeDashboardWindow(): void {
+  const window = getDashboardWindow();
+  if (!window) {
+    return;
+  }
+
+  window.minimize();
+}
+
+export function toggleDashboardMaximize(): void {
+  const window = getDashboardWindow();
+  if (!window) {
+    return;
+  }
+
+  if (window.isMaximized()) {
+    window.unmaximize();
+    return;
+  }
+
+  window.maximize();
+}
+
+export function closeDashboardWindow(): AppState {
+  return hideDashboardWindow();
 }
 
 export function prepareForQuit(): void {

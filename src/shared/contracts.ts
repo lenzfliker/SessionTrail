@@ -17,6 +17,11 @@ export type StartupDashboardBehavior = "tray_only" | "show_dashboard";
 export type SnailPetScale = 2 | 3 | 4;
 export type SnailPetSpeed = "snail_pace" | "low" | "normal" | "fast" | "hyper";
 export type SnailPetBehaviorState = "idle" | "move" | "work";
+export type SnailPetInsetProfile = {
+  2: number;
+  3: number;
+  4: number;
+};
 
 export type SessionSummary = {
   id: string;
@@ -99,6 +104,7 @@ export type AppSettings = {
   snailPetEnabled: boolean;
   snailPetScale: SnailPetScale;
   snailPetSpeed: SnailPetSpeed;
+  snailPetInsetProfile: SnailPetInsetProfile;
   theme: ThemeMode;
 };
 
@@ -124,6 +130,7 @@ export type AppState = {
   trayReady: boolean;
   dashboardVisibility: DashboardVisibility;
   dashboardFullscreen: boolean;
+  dashboardMaximized: boolean;
   activeSession: SessionSummary | null;
   recentSessions: SessionSummary[];
   pendingRecovery: RecoverySessionSummary | null;
@@ -239,6 +246,7 @@ export type UpdateSettingsInput = Partial<
     | "snailPetEnabled"
     | "snailPetScale"
     | "snailPetSpeed"
+    | "snailPetInsetProfile"
   >
 >;
 
@@ -437,6 +445,9 @@ export type SessionTrailApi = {
     showDashboard: () => Promise<AppState>;
     hideDashboard: () => Promise<AppState>;
     toggleDashboard: () => Promise<AppState>;
+    minimizeWindow: () => Promise<void>;
+    toggleMaximizeWindow: () => Promise<void>;
+    closeWindow: () => Promise<AppState>;
     clearLastError: () => Promise<AppState>;
     dismissResumeNotice: () => Promise<AppState>;
     quit: () => Promise<void>;
@@ -445,6 +456,7 @@ export type SessionTrailApi = {
   settings: {
     get: () => Promise<AppSettings>;
     set: (input: UpdateSettingsInput) => Promise<AppSettings>;
+    chooseExportDirectory: () => Promise<string | null>;
   };
   session: {
     start: (input?: StartSessionInput) => Promise<SessionSummary>;

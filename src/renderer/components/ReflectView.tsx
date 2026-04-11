@@ -308,49 +308,51 @@ function ReflectViewInner({
           </section>
 
           <div className="reflect-grid reflect-grid--supporting">
-            <section className="panel reflect-panel">
-              <div className="panel__header">
-                <h2>Fragmentation</h2>
-                <span className="badge">{summary.fragmentation.totalPauseCount} pauses</span>
-              </div>
-              <div className="stats">
-                <div>
-                  <span>Pause rate</span>
-                  <strong>{summary.fragmentation.pausesPerWorkedHour.toFixed(2)}/hr</strong>
+            <div className="reflect-supporting-stack">
+              <section className="panel reflect-panel reflect-panel--triple-stats">
+                <div className="panel__header">
+                  <h2>Fragmentation</h2>
+                  <span className="badge">{summary.fragmentation.totalPauseCount} pauses</span>
                 </div>
-                <div>
-                  <span>Median pause</span>
-                  <strong>{formatDuration(summary.fragmentation.medianPauseSeconds)}</strong>
+                <div className="stats">
+                  <div>
+                    <span>Pause rate</span>
+                    <strong>{summary.fragmentation.pausesPerWorkedHour.toFixed(2)}/hr</strong>
+                  </div>
+                  <div>
+                    <span>Median pause</span>
+                    <strong>{formatDuration(summary.fragmentation.medianPauseSeconds)}</strong>
+                  </div>
+                  <div>
+                    <span>Avg work stretch</span>
+                    <strong>{formatDuration(summary.fragmentation.averageActiveBlockSeconds)}</strong>
+                  </div>
                 </div>
-                <div>
-                  <span>Avg work stretch</span>
-                  <strong>{formatDuration(summary.fragmentation.averageActiveBlockSeconds)}</strong>
-                </div>
-              </div>
-            </section>
+              </section>
 
-            <section className="panel reflect-panel">
-              <div className="panel__header">
-                <h2>Interruptions</h2>
-                <span className="badge">{summary.interruptions.affectedSessionCount} sessions</span>
-              </div>
-              <div className="stats">
-                <div>
-                  <span>Suspend</span>
-                  <strong>{summary.interruptions.suspendCount}</strong>
+              <section className="panel reflect-panel reflect-panel--triple-stats">
+                <div className="panel__header">
+                  <h2>Interruptions</h2>
+                  <span className="badge">{summary.interruptions.affectedSessionCount} sessions</span>
                 </div>
-                <div>
-                  <span>App exit</span>
-                  <strong>{summary.interruptions.appExitCount}</strong>
+                <div className="stats">
+                  <div>
+                    <span>Suspend</span>
+                    <strong>{summary.interruptions.suspendCount}</strong>
+                  </div>
+                  <div>
+                    <span>App exit</span>
+                    <strong>{summary.interruptions.appExitCount}</strong>
+                  </div>
+                  <div>
+                    <span>Crash recovery</span>
+                    <strong>{summary.interruptions.crashRecoveryCount}</strong>
+                  </div>
                 </div>
-                <div>
-                  <span>Crash recovery</span>
-                  <strong>{summary.interruptions.crashRecoveryCount}</strong>
-                </div>
-              </div>
-            </section>
+              </section>
+            </div>
 
-            <section className="panel reflect-panel">
+            <section className="panel reflect-panel reflect-panel--checkpoints">
               <div className="panel__header">
                 <h2>Checkpoints</h2>
                 <span className="badge">{summary.checkpoints.reminderTriggeredCount} prompts</span>

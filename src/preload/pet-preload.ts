@@ -6,6 +6,8 @@ type SnailPetVisualState = {
   flipX: boolean;
   renderScale: 2 | 3 | 4;
   windowSize: number;
+  spriteSizePx: number;
+  hostPaddingPx: number;
   frameDurationMs: number;
 };
 
